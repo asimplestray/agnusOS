@@ -7,8 +7,8 @@
 |------|------|-------|--------|
 | 1 | Infra DRM Core + Memória | Mês 1 | ✅ **Concluída** |
 | 2 | Scheduler, Atomic KMS base, Compat Layer | Mês 1–2 | ✅ **Concluída** |
-| 3 | amdgpu v0.1.0 MINIMAL (sem DC) | Mês 2–3 | 🔲 Próxima |
-| 4 | Display Core (DC) por geração | Mês 3–5 | 🔲 |
+| 3 | amdgpu v0.1.0 MINIMAL (sem DC) | Mês 2–3 | ✅ **Concluída** |
+| 4 | Display Core (DC) por geração | Mês 3–5 | 🔲 Próxima |
 | 5 | DPM/PowerPlay + Compute + Validação | Mês 5–6 | 🔲 |
 
 ---
@@ -159,12 +159,64 @@
 - Validar que DRM core (Fase 1–2) serve i915 sem mudanças de API; corrigir vazamentos genéricos.
 - **Entrega:** issues rastreáveis, docs por ASIC, DRM core 100% genérico.
 
+## Fase 3 — amdgpu v0.1.0 MINIMAL (sem DC) ✅ CONCLUÍDA
+
+> Código em `kernel/drivers/gpu/amd/amdgpu/` + header `kernel/include/amdgpu.h`.
+> Validado na emulação `amd-rx480` (fork vgpu) com KVM; screenshot do scanout:
+> `screenshot6_amdgpu_rx480.{ppm,png}`. Sem ASIC no barramento, o driver sai
+> graciosamente (`nenhuma ASIC suportada`) e o boot segue normal.
+
+### Dev 1 — HW Init + ASIC detect ✅
+- `amdgpu_device.c`: PCI ID table Polaris10/11/12, `Polaris10 detected (1002:67df rev c7)`,
+  rmmio via BAR0, VRAM aperture via BAR1 mapeada em janela VMM própria,
+  `GRBM_SOFT_RESET` + `BIF_FB_EN`, register dump coerente (CONFIG_MEMSIZE=256 MB,
+  GRBM/SRBM idle, SMC_RESP=1), power state forçado LOW.
+- **Entrega:** boot log mostra detecção + dump coerente. → **Entregue.**
+- Nota: sizing de BAR por config space removido — escrever nos registros de BAR sob
+  KVM invalida o slot e derruba o guest; tamanho vem de `CONFIG_MEMSIZE`.
+
+### Dev 2 — VRAM/GTT Managers ✅
+- `amdgpu_vram_mgr.c`: papel do `amdgpu_vram_mgr`/`gtt_mgr` sobre o GEM nativo
+  (VRAM = carveout do BAR1 gerido pelo `drm_gem_init`; GTT = páginas de RAM).
+- **Entrega:** BO em VRAM e em GTT com read-back de padrão conhecido +
+  contabilidade do carveout (`amdgpu_mem_selftest()` PASSA no boot). → **Entregue.**
+
+### Dev 3 — Modeset básico (fbdev linear, sem DC) ✅
+- `amdgpu_mode.c`: pipeline DCE subset da emulação — timing VESA 1920×1080@60,
+  superfície GRPH apontando para BO VRAM alocado pelo mgr (Dev 2), pitch/formato
+  XRGB8888, HDP flush, CRTC enable.
+- Fork vgpu ganhou scanout real (`core/vgpu_dce.c`): o host renderiza a VRAM no
+  console QEMU conforme os regs GRPH programados pelo guest.
+- **Entrega:** console gráfico 1920×1080 renderizado VIA GPU (antes só VGA std),
+  com evidência visual (screenshot). `amdgpu_display_selftest()` PASSA. → **Entregue.**
+
+### Dev 4 — GFX ring + thermal monitor ✅
+- `amdgpu_gfx.c`: ring buffer em BO GTT (4096 dwords), submissão pelos regs
+  `GFX_RB_WPTR/RPTR`, pacotes PACKET3-style (NOP / WRITE_DATA / FENCE), pump que
+  consome o ring e sinaliza fences (contrato do IRQ EOP no HW real), integrado ao
+  drm_sched da Fase 2 (`gfx_run_job`/`timedout_job`). Compute/SDMA desligados.
+- `gpu_test_pattern.c`: gradiente HSV animado (~10 fps, rate-limit por ticks no
+  loop idle — workqueue nativa é passiva), fence de frame pelo GFX ring.
+- `thermal_monitor.c`: handshake SMC (`ReadTemperature`), poll 2 s, warn 85 °C,
+  crit 95 °C com PANIC; na emulação o SMU responde mas não telemetra (temp=0 =
+  modo passivo, mesmo caminho de código do HW real).
+- **Entrega:** pattern rodando continuamente sem hang; 8 jobs WRITE_DATA/FENCE no
+  ring validados pixel a pixel (`amdgpu_gfx_selftest()` PASSA); log térmico no
+  serial. → **Entregue.**
+
+### Correções de infraestrutura exigidas pela fase
+- Fork vgpu: `vgpu_display_update` nunca criava surface (scanout inexistente);
+  adicionado hook `ops->display_update` + `vgpu_dce.c`; reset apagava CONFIG_MEMSIZE
+  (restaurado no chip_reset do gfx8); `run-test.sh` dessincronizado da árvore
+  (path hardcoded + cópias fonte→qemu agora sincronizadas antes do boot).
+
 ---
 
 ## Ordem de execução & dependências
 
-- **Fase 3 trava na Fase 1+2** (GEM/fence/sched/compat prontos). ✅ Fases 1 e 2 concluídas.
+- **Fase 3 trava na Fase 1+2** (GEM/fence/sched/compat prontos). ✅ Fases 1, 2 e 3 concluídas.
 - ✅ **Fase 1 concluída** — DRM core, GEM, dma-fence/dma-resv, firmware loader e DMA API já no `master`, com selftests rodando no boot (`drm_gem_test()`, `dma_test_run_all()`).
 - ✅ **Fase 2 concluída** — dma-buf/PRIME, drm_sched (timeout/recovery), atomic KMS base e compat layer no `master`, com selftests no boot (`dma_buf_test()`, `drm_sched_test()`, `drm_atomic_test()`, `compat_layer_test()`).
+- ✅ **Fase 3 concluída** — amdgpu v0.1.0 MINIMAL no `master`: detect/reset/rmmio, VRAM/GTT mgr sobre GEM, modeset DCE com scanout real na emulação, GFX ring integrado ao sched + thermal/pattern; selftests no boot quando há ASIC suportada (`amdgpu_mem_selftest()`, `amdgpu_display_selftest()`, `amdgpu_gfx_selftest()`).
 - Dev 3 (KMS base) e Dev 1 (drm core) precisam alinhar a API de commit antes da Fase 4. → **Feito na Fase 2**: `drm_atomic_funcs.commit` é o hook de instalação para o DC.
 - **Gate de qualidade:** nada entra em `compat/` ou `drm/` sem code review do tech lead (regra do doc, seção 7).

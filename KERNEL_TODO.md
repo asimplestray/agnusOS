@@ -22,7 +22,8 @@
 - Driver Polaris/R500: probe PCI, modeset 1920×1080×32, test pattern ✅
 - **apollo_drv.c**: driver de validação que exercita DRM core + GEM + fence + ring + IRQ de ponta a ponta (base pra compat layer do amdgpu) ✅
 - **Fase 2 do port**: dma-buf/PRIME + sync_file, drm_sched (entity/runqueue/timeout-recovery), atomic KMS base (commit all-or-nothing + rollback), compat layer `compat/linux_*.h` — selftests no boot ✅
-- **Correções de base**: EOI do PIC no `interrupt_handler` (IRQs congelavam após a 1ª entrega) e `workqueue_init()` na sequência de boot ✅
+- **Fase 3 do port**: amdgpu v0.1.0 MINIMAL — detect Polaris10/11/12, rmmio/VRAM aperture, VRAM/GTT mgr sobre GEM, modeset DCE 1920×1080@60 com BO VRAM, GFX ring (WPTR/RPTR + pacotes WRITE_DATA/FENCE) integrado ao drm_sched, thermal monitor (SMC) e test pattern animado no idle; scanout real na emulação vgpu (`vgpu_dce.c`) — screenshot `screenshot6_amdgpu_rx480.png` ✅
+- **Correções de base**: EOI do PIC no `interrupt_handler` (IRQs congelavam após a 1ª entrega), `workqueue_init()` na sequência de boot e probe polaris legado removido (sizing de BAR quebrava KVM) ✅
 
 ---
 
@@ -130,7 +131,11 @@ No boot o kernel roda automaticamente:
 - `dma_buf_test()` — dma-buf/PRIME com mmap compartilhado entre 2 devices (Fase 2)
 - `drm_sched_test()` — 1000 jobs em ordem + timeout/recovery + RR (Fase 2)
 - `drm_atomic_test()` — commit atômico válido + rollback de estados inválidos (Fase 2)
-- Probe Polaris (device IDs `0x67DF/0x67EF/0x67FF`) → modeset 1920×1080×32 + test pattern
+- `amdgpu_init()` — Fase 3: se houver ASIC suportada (vgpu `amd-rx480`), roda a cadeia
+  completa (detect → reset → VRAM/GTT mgr → modeset 1920×1080@60 → GFX ring) +
+  selftests (`amdgpu_mem_selftest()`, `amdgpu_display_selftest()`, `amdgpu_gfx_selftest()`)
+  + thermal monitor + test pattern animado; sem ASIC, sai graciosamente
+- Loop idle chama `amdgpu_idle_tick()` (pattern ~10 fps + poll térmico)
 
 ---
 
@@ -177,8 +182,9 @@ Ele define o formato da futura compat layer.
 - [x] DRM Core + GEM + dma-fence + dma-resv (Fase 1 do port)
 - [x] dma-buf / drm_sched / atomic KMS / compat layer (Fase 2 do port)
 - [x] EOI no `interrupt_handler` (IRQs agora disparam continuamente) + `workqueue_init()` no boot
-- [ ] Driver Polaris/amdgpu Fases 3-6
+- [x] amdgpu v0.1.0 MINIMAL (Fase 3 do port): detect/reset/rmmio, VRAM/GTT mgr, modeset DCE com scanout na vgpu, GFX ring + sched, thermal/pattern
+- [ ] Driver Polaris/amdgpu Fases 4-6 (DC por geração, DPM/PowerPlay, compute/SDMA)
 
 ---
 
-*Última atualização: 2026-08-21*
+*Última atualização: 2026-08-21 (Fase 3 concluída)*

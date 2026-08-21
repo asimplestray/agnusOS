@@ -33,7 +33,9 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/drm_gem.o \
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
-      build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o
+      build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
+      build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
+      build/amdgpu_gfx.o build/thermal_monitor.o build/gpu_test_pattern.o
 
 # Output
 ISO_OUT = apolloos.iso
@@ -306,6 +308,36 @@ build/drm_atomic.o: kernel/drivers/drm/drm_atomic.c kernel/include/drm/drm_atomi
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/compat_check.o: kernel/drivers/drm/compat_check.c
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/amdgpu_device.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/amdgpu_vram_mgr.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_vram_mgr.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/amdgpu_mode.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_mode.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/amdgpu_gfx.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/thermal_monitor.o: kernel/drivers/gpu/amd/amdgpu/thermal_monitor.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/gpu_test_pattern.o: kernel/drivers/gpu/amd/amdgpu/gpu_test_pattern.c kernel/include/amdgpu.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

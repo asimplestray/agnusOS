@@ -31,6 +31,7 @@
 #include <drm/drm_sched.h>
 #include <drm/drm_atomic.h>
 #include <compat/compat_check.h>
+#include <amdgpu.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -128,26 +129,10 @@ void kernel_main(void) {
         /* Fase 1 Dev 2: GEM selftest (dev3_test-style probe) */
         drm_gem_test();
 
-        // Try to initialize Apollo GPU driver (RX 580 / Polaris)
-        for (int bus = 0; bus < 256; bus++) {
-            for (int dev = 0; dev < 32; dev++) {
-                uint16_t vendor = pci_read_word((uint8_t)bus, (uint8_t)dev, 0, 0);
-                if (vendor == 0x1002) {
-                    uint16_t dev_id = pci_read_word((uint8_t)bus, (uint8_t)dev, 0, 2);
-                    // RX 580 (Polaris 20) / RX 480 (Polaris 10)
-                    if (dev_id == 0x67DF || dev_id == 0x67EF || dev_id == 0x67FF) {
-                        serial_print("ApolloOS: Found Polaris GPU, initializing driver\n");
-                        struct polaris_dev pdev;
-                        if (polaris_init(&pdev, (uint8_t)bus, (uint8_t)dev, 0) == 0) {
-                            polaris_set_mode(&pdev, 1920, 1080, 32);
-                            polaris_test_pattern(&pdev);
-                            screen_log("OK", COLOR_LIGHT_GREEN, "Polaris hardware initialized (1920x1080x32).");
-                            serial_print("ApolloOS: ApolloGPU driver initialized\n");
-                        }
-                    }
-                }
-            }
-        }
+        /* Probe legado do polaris.c REMOVIDO: fazia sizing de BAR via
+         * config space (quebra o mapeamento KVM) e foi substituído pela
+         * cadeia amdgpu v0.1.0 MINIMAL (Fase 3), que roda após os
+         * selftests da Fase 2. */
     } else {
         screen_log("FALHA", COLOR_LIGHT_RED, "Multiboot2 invalido.");
     }
@@ -222,14 +207,20 @@ void kernel_main(void) {
     drm_sched_test();
     drm_atomic_test();
 
+    /* Fase 3: amdgpu v0.1.0 MINIMAL (só ativa se houver ASIC suportada) */
+    screen_print("\n>> Fase 3: amdgpu v0.1.0 MINIMAL...\n");
+    amdgpu_init();
+
     screen_print("\n>> ApolloOS pronto. Iniciando processo usuario...\n");
 
     /* Launch /bin/hello from RamFS in Ring 3 */
     /* task_create_user("/bin/hello"); */
 
     /* task_create_user() calls jump_to_usermode which does not return.
-     * If we get here somehow, spin safely. */
+     * If we get here somehow, spin safely — servindo os serviços
+     * periódicos do amdgpu (pattern/thermal) no idle. */
     while (1) {
+        amdgpu_idle_tick();
         __asm__ volatile("hlt");
     }
 }
