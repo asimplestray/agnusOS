@@ -1,0 +1,27 @@
+# Build artifacts
+build/
+*.iso
+*.img
+*.zip
+*.o
+*.log
+
+# vgpu (separate repository)
+vgpu/
+
+# Test files
+test.c
+test.o
+
+# Screenshots
+*.ppm
+*.png
+
+# Disk images
+disk.img
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
