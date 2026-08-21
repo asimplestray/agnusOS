@@ -300,4 +300,13 @@ void interrupt_handler(struct interrupt_frame* frame) {
         extern void do_signal(struct interrupt_frame *frame);
         do_signal(frame);
     }
+
+    // 4. Acknowledge the PIC (EOI) so further IRQs can be delivered.
+    //    Without this, every IRQ line fires exactly once after unmasking
+    //    and the PIT/keyboard/RTC effectively freeze.
+    if (frame->int_no >= 32 && frame->int_no < 48) {
+        if (frame->int_no >= 40)
+            outb(0xA0, 0x20);   // slave
+        outb(0x20, 0x20);       // master
+    }
 }

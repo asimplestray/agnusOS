@@ -26,6 +26,11 @@
 #include <rtl8139.h>
 #include <drm/drm_driver.h>
 #include <drm/dma_test.h>
+#include <workqueue.h>
+#include <drm/dma_buf.h>
+#include <drm/drm_sched.h>
+#include <drm/drm_atomic.h>
+#include <compat/compat_check.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -68,6 +73,9 @@ void kernel_main(void) {
         kheap_init();
         serial_print("ApolloOS: kheap_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Kernel heap ok.");
+
+        workqueue_init();
+        serial_print("ApolloOS: workqueue_init done\n");
 
         vfs_init();
         serial_print("ApolloOS: vfs_init done\n");
@@ -206,6 +214,13 @@ void kernel_main(void) {
     
     /* Run DMA fence/resv tests */
     dma_test_run_all();
+
+    /* Fase 2 selftests: compat layer, dma-buf/PRIME, drm_sched, atomic KMS */
+    screen_print("\n>> Fase 2: testes da infra DRM (compat/dma-buf/sched/atomic)...\n");
+    compat_layer_test();
+    dma_buf_test();
+    drm_sched_test();
+    drm_atomic_test();
 
     screen_print("\n>> ApolloOS pronto. Iniciando processo usuario...\n");
 

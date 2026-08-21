@@ -21,6 +21,8 @@
 - **dma-fence + dma-resv** (fence/callback/timeline, reservation object 1 writer/N readers, testes no boot) ✅
 - Driver Polaris/R500: probe PCI, modeset 1920×1080×32, test pattern ✅
 - **apollo_drv.c**: driver de validação que exercita DRM core + GEM + fence + ring + IRQ de ponta a ponta (base pra compat layer do amdgpu) ✅
+- **Fase 2 do port**: dma-buf/PRIME + sync_file, drm_sched (entity/runqueue/timeout-recovery), atomic KMS base (commit all-or-nothing + rollback), compat layer `compat/linux_*.h` — selftests no boot ✅
+- **Correções de base**: EOI do PIC no `interrupt_handler` (IRQs congelavam após a 1ª entrega) e `workqueue_init()` na sequência de boot ✅
 
 ---
 
@@ -28,13 +30,14 @@
 
 | # | Item | Status | Por que importa |
 |---|------|--------|-----------------|
-| **1** | **dma-buf / PRIME** (`dma_buf.c`) | 🔲 Zero | Compartilhar BO entre drivers; PRIME |
-| **2** | **DRM Scheduler** (`drm_sched.c`) | 🔲 Zero | Job queue/entity/runqueue/timeout p/ amdgpu |
-| **3** | **Atomic KMS** (`drm_atomic.c`) | 🔲 Zero | Commit atômico plane/crtc/encoder/connector |
-| **4** | **Compat layer** (`kernel/include/compat/linux_*.h`) | 🔲 Zero | Port do amdgpu em si |
+| **1** | **dma-buf / PRIME** (`dma_buf.c`) | ✅ **Concluído** (Fase 2) | Compartilhar BO entre drivers; PRIME |
+| **2** | **DRM Scheduler** (`drm_sched.c`) | ✅ **Concluído** (Fase 2) | Job queue/entity/runqueue/timeout p/ amdgpu |
+| **3** | **Atomic KMS** (`drm_atomic.c`) | ✅ **Concluído** (Fase 2) | Commit atômico plane/crtc/encoder/connector |
+| **4** | **Compat layer** (`kernel/include/compat/linux_*.h`) | ✅ **Concluída** (Fase 2) | Port do amdgpu em si |
 | **5** | **IOMMU real** (DMAR via ACPI) | ⚠️ Só DMA API default + stub | GTT page tables, BO em RAM do sistema |
 | **6** | **MSI-X allocation completa** | ⚠️ Só mask vector | Múltiplos vetores por device (vblank/EOP/SDMA) |
 | **7** | **FPU lazy/XSAVE otimizado** | ⚠️ fxsave/fxrstor full save | Performance do context switch |
+| **8** | **Drenagem automática do system_wq** | ⚠️ WQ passivo: works só rodam em `flush_workqueue()` explícito | rtc/threaded IRQ executarem sem chamador |
 
 ---
 
@@ -86,10 +89,10 @@
 | dma-fence | `kernel/drivers/drm/dma_fence.c` | ✅ timeline + callbacks |
 | dma-resv | `kernel/drivers/drm/dma_resv.c` | ✅ 1 writer / N readers |
 | Testes | `kernel/drivers/drm/dma_test.c` | ✅ roda no boot (`dma_test_run_all`) |
-| dma-buf | `kernel/drivers/drm/dma_buf.c` | 🔲 Fase 2 |
-| drm_sched | `kernel/drivers/drm/drm_sched.c` | 🔲 Fase 2 |
-| Atomic KMS | `kernel/drivers/drm/drm_atomic.c` | 🔲 Fase 2 |
-| Compat layer | `kernel/include/compat/linux_*.h` | 🔲 Fase 2 |
+| dma-buf / PRIME | `kernel/drivers/drm/dma_buf.c` + `sync_file` | ✅ Fase 2 — export/import, mmap compartilhado, `drm_gem_prime_export` |
+| drm_sched | `kernel/drivers/drm/drm_sched.c` | ✅ Fase 2 — entity FIFO + RR, timeout/recovery |
+| Atomic KMS | `kernel/drivers/drm/drm_atomic.c` | ✅ Fase 2 — commit all-or-nothing com rollback |
+| Compat layer | `kernel/include/compat/linux_*.h` | ✅ Fase 2 — validação runtime no boot |
 
 ---
 
@@ -123,6 +126,10 @@ vgpu/scripts/run-test.sh apolloos.iso 2G nvidia-gt730
 No boot o kernel roda automaticamente:
 - `drm_gem_test()` — selftest do GEM (BO create/write/read/unmap)
 - `dma_test_run_all()` — testes de fence, resv e timelines concorrentes
+- `compat_layer_test()` — validação da compat layer (Fase 2)
+- `dma_buf_test()` — dma-buf/PRIME com mmap compartilhado entre 2 devices (Fase 2)
+- `drm_sched_test()` — 1000 jobs em ordem + timeout/recovery + RR (Fase 2)
+- `drm_atomic_test()` — commit atômico válido + rollback de estados inválidos (Fase 2)
 - Probe Polaris (device IDs `0x67DF/0x67EF/0x67FF`) → modeset 1920×1080×32 + test pattern
 
 ---
@@ -168,7 +175,8 @@ Ele define o formato da futura compat layer.
 - [x] Workqueue / timerwheel
 - [x] DMA API (ops table) — falta IOMMU real
 - [x] DRM Core + GEM + dma-fence + dma-resv (Fase 1 do port)
-- [ ] dma-buf / drm_sched / atomic KMS / compat layer (Fase 2 do port)
+- [x] dma-buf / drm_sched / atomic KMS / compat layer (Fase 2 do port)
+- [x] EOI no `interrupt_handler` (IRQs agora disparam continuamente) + `workqueue_init()` no boot
 - [ ] Driver Polaris/amdgpu Fases 3-6
 
 ---

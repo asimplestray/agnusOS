@@ -15,7 +15,7 @@ Este documento registra a estratégia acordada para trazer suporte a GPUs AMD mo
 | Dev 3 — dma-fence + dma-resv (`dma_fence.c`, `dma_resv.c`, testes no boot) | ✅ |
 | Dev 4 — Firmware loader + PCIe MSI-X/BAR/IOMMU stub (`firmware.c`, `pci.c`) | ⚠️ implementado; falta teste de boot dedicado (critério de entrega) |
 
-**Bloqueios de Fase 2 herdados do kernel base (não-DRM):** `#PF/demand paging` e `preemptive scheduler` ainda pendentes (ver `KERNEL_TODO.md`) — o scheduler preemptivo é requisito para timeout/recovery do `drm_sched` e jobs não travarem o CPU.
+**Bloqueios de Fase 2 herdados do kernel base:** resolvidos — `#PF/demand paging + COW` e `scheduler preemptivo + FPU/SSE` já estão concluídos no kernel base (ver `KERNEL_TODO.md`). O scheduler preemptivo (requisito para timeout/recovery do `drm_sched`) e o workqueue/timerwheel já estão disponíveis para a Fase 2.
 
 ---
 
@@ -59,12 +59,12 @@ Antes de tocar no código do amdgpu, o kernel precisa ter estes subsistemas **na
 | **DRM Core** | `drm_device.c`, `drm_core.c`, `drm_device.h`, `drm_driver.h` | ✅ Implementado — `drm_init()` roda no boot, registra `/dev/dri/card0` (Fase 1 Dev 1) | ~2 sem |
 | **GEM (Graphics Execution Manager)** | `drm_gem.c`: BO create/destroy/mmap/refcount, VRAM carveout, shrinker stub | ✅ Implementado — selftest de boot (create/write/read/unmap) passando (Fase 1 Dev 2) | ~2 sem |
 | **dma-fence / dma-resv** | `dma_fence.c`: fence + callback + timeline; `dma_resv.c`: reservation object | ✅ Implementado — testes de boot com 2 timelines concorrentes passando (Fase 1 Dev 3) | 1-2 sem |
-| **dma-buf / PRIME** | `dma_buf.c`: export/import, mmap, sync_file | 🔲 Não iniciado (Fase 2 Dev 1) | ~1 sem |
-| **Atomic KMS** | `drm_atomic.c`: plane/crtc/encoder/connector, properties, commit | 🔲 Stubs apenas (Fase 2 Dev 3) | ~2 sem |
-| **DRM Scheduler** | `drm_sched.c`: job queue, entity, runqueue, timeout/recovery | 🔲 Não iniciado (Fase 2 Dev 2) | ~1 mês |
+| **dma-buf / PRIME** | `dma_buf.c`: export/import, mmap, sync_file | ✅ Implementado — attachments, vmap compartilhado, sync_file; selftest 2 devices fake no boot (Fase 2 Dev 1) | ~1 sem |
+| **Atomic KMS** | `drm_atomic.c`: plane/crtc/encoder/connector, properties, commit | ✅ Implementado — snapshot old/new, commit all-or-nothing com rollback; selftest no boot (Fase 2 Dev 3) | ~2 sem |
+| **DRM Scheduler** | `drm_sched.c`: job queue, entity, runqueue, timeout/recovery | ✅ Implementado — entity FIFO + RR sobre workqueue nativo; selftest 1000 jobs + timeout no boot (Fase 2 Dev 2) | ~1 mês |
 | **Firmware Loader** | `firmware.c`: `request_firmware()`, fallback built-in, `/lib/firmware` | ✅ Implementado — `request_firmware()` + `register_builtin_firmware()` + cache do initrd; em validação (Fase 1 Dev 4) | ~2 sem |
 | **PCIe/MSI-X + IOMMU stub** | `pci.c` extensions: MSI-X, BAR mapping, IOMMU dummy | ✅ Estendido — MSI/MSI-X enable/mask, BAR write-combine, IOMMU stub; em validação (Fase 1 Dev 4) | 2-4 sem |
-| **Compat Layer** | `kernel/include/compat/linux_*.h` | 🔲 Não iniciado (Fase 2 Dev 4) | contínuo |
+| **Compat Layer** | `kernel/include/compat/linux_*.h` | ✅ Implementado — types/list/mutex/spinlock/work/fence/dma_buf/module, convenção documentada; validação runtime no boot (Fase 2 Dev 4) | contínuo |
 
 > **Nota:** Esta infra serve **também para i915** quando for a vez. Escrevam uma vez, usem duas.
 
@@ -293,22 +293,22 @@ amdgpu.ko (um .ko só)
 
 ## 9. Próximos Passos Imediatos (Action Items)
 
-> **Fase 1 concluída** (itens 1-4 + DRM core). Próximo bloco: Fase 2 — ver `GPU_PORTING_TASKS.md`.
+> **Fase 1 e Fase 2 concluídas** (itens 1-9 + DRM core). Próximo bloco: Fase 3 — amdgpu v0.1.0 MINIMAL.
 
 1. **[x]** Criar `kernel/drivers/drm/drm_device.c` — DRM core real, ioctl dispatch, `/dev/dri/card0` (*Fase 1 Dev 1 — entregue*)
 2. **[x]** Criar `kernel/drivers/drm/drm_gem.c` — GEM minimal (BO linear, refcount, mmap) (*Fase 1 Dev 2 — entregue*)
 3. **[x]** Criar `kernel/drivers/drm/dma_fence.c` — fence + callback + timeline (*Fase 1 Dev 3 — entregue*)
 4. **[x]** Criar `kernel/drivers/drm/dma_resv.c` — reservation object (*Fase 1 Dev 3 — entregue*)
 5. **[x]** Criar `kernel/fs/firmware.c` — `request_firmware()` + built-in fallback (*Fase 1 Dev 4 — entregue, em validação*)
-6. **[ ]** Criar `kernel/drivers/drm/dma_buf.c` — export/import, mmap, sync_file
-7. **[ ]** Criar `kernel/drivers/drm/drm_sched.c` — job queue + entity + runqueue
-8. **[ ]** Criar `kernel/drivers/drm/drm_atomic.c` — atomic KMS base
-9. **[ ]** Criar `kernel/include/compat/linux_*.h` — headers da compat layer
+6. **[x]** Criar `kernel/drivers/drm/dma_buf.c` — export/import, mmap, sync_file (*Fase 2 Dev 1 — entregue*)
+7. **[x]** Criar `kernel/drivers/drm/drm_sched.c` — job queue + entity + runqueue + timeout/recovery (*Fase 2 Dev 2 — entregue*)
+8. **[x]** Criar `kernel/drivers/drm/drm_atomic.c` — atomic KMS base com rollback (*Fase 2 Dev 3 — entregue*)
+9. **[x]** Criar `kernel/include/compat/linux_*.h` — headers da compat layer (*Fase 2 Dev 4 — entregue*)
 10. **[ ]** Completar MSI-X allocation dinâmica + IOMMU real (DMAR via ACPI)
-11. **[ ]** Adicionar `thermal_monitor.c` no `polaris.c` / futuro `amdgpu`
-12. **[ ]** Adicionar `gpu_test_pattern.c` condicional (*`polaris_test_pattern` já existe como ponto de partida*)
+11. **[ ]** Adicionar `thermal_monitor.c` no `polaris.c` / futuro `amdgpu` (*Fase 3 Dev 4*)
+12. **[ ]** Adicionar `gpu_test_pattern.c` condicional (*`polaris_test_pattern` já existe como ponto de partida; Fase 3 Dev 4*)
 13. **[ ]** Definir baseline LTS exata (tag do kernel Linux) e travar
-14. **[ ]** Criar milestone `Infra DRM` no GitHub com issues por arquivo
+14. **[ ]** Criar milestone `amdgpu Minimal` no GitHub com issues por arquivo (Fase 3)
 
 ---
 

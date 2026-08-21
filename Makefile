@@ -32,7 +32,8 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o \
       build/drm_gem.o \
       build/string.o \
-      build/dma_fence.o build/dma_resv.o build/dma_test.o
+      build/dma_fence.o build/dma_resv.o build/dma_test.o \
+      build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o
 
 # Output
 ISO_OUT = apolloos.iso
@@ -284,12 +285,27 @@ build/dma_test.o: kernel/drivers/drm/dma_test.c
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
-: vgpu/qemu/hw/display/amd/gfx8/gfx8.c
+build/drm_gem.o: kernel/drivers/drm/drm_gem.c kernel/include/drm/drm_gem.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -Ivgpu/qemu -Ivgpu/qemu/include -Ivgpu/qemu/hw/display/core -c -o $@ $<
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
-build/drm_gem.o: kernel/drivers/drm/drm_gem.c kernel/include/drm/drm_gem.h
+build/dma_buf.o: kernel/drivers/drm/dma_buf.c kernel/include/drm/dma_buf.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/drm_sched.o: kernel/drivers/drm/drm_sched.c kernel/include/drm/drm_sched.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/drm_atomic.o: kernel/drivers/drm/drm_atomic.c kernel/include/drm/drm_atomic.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/compat_check.o: kernel/drivers/drm/compat_check.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

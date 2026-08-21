@@ -6,8 +6,8 @@
 | Fase | Tema | Prazo | Status |
 |------|------|-------|--------|
 | 1 | Infra DRM Core + Memória | Mês 1 | ✅ **Concluída** |
-| 2 | Scheduler, Atomic KMS base, Compat Layer | Mês 1–2 | 🔲 Próxima |
-| 3 | amdgpu v0.1.0 MINIMAL (sem DC) | Mês 2–3 | 🔲 |
+| 2 | Scheduler, Atomic KMS base, Compat Layer | Mês 1–2 | ✅ **Concluída** |
+| 3 | amdgpu v0.1.0 MINIMAL (sem DC) | Mês 2–3 | 🔲 Próxima |
 | 4 | Display Core (DC) por geração | Mês 3–5 | 🔲 |
 | 5 | DPM/PowerPlay + Compute + Validação | Mês 5–6 | 🔲 |
 
@@ -40,27 +40,59 @@
 
 ---
 
-## Fase 2 — Scheduler, Atomic KMS base, Compat Layer 🔲 PRÓXIMA
+## Fase 2 — Scheduler, Atomic KMS base, Compat Layer ✅ CONCLUÍDA
 
-> Pré-requisitos já disponíveis da Fase 1: DRM core, GEM, dma-fence/dma-resv,
-> firmware loader, workqueue/timerwheel, DMA API.
+> Pré-requisitos usados da Fase 1: DRM core, GEM, dma-fence/dma-resv,
+> firmware loader, workqueue/timerwheel, DMA API. Selftests rodando no boot:
+> `compat_layer_test()`, `dma_buf_test()`, `drm_sched_test()`, `drm_atomic_test()`.
 
-### Dev 1 — dma-buf / PRIME
-- Criar `kernel/drivers/drm/dma_buf.c`: export/import, mmap, sync_file.
-- **Entrega:** BO exportada por um driver e importada por outro (2 devices fake) com mmap compartilhado.
+### Dev 1 — dma-buf / PRIME ✅
+- Criado `kernel/drivers/drm/dma_buf.c` + `kernel/include/drm/dma_buf.h`: export/import,
+  attachments, mmap compartilhado (janela de vmap própria), sync_file sobre dma_fence.
+- Glue PRIME: `drm_gem_prime_export()` empacota um GEM BO (GTT pages ou VRAM contíguo).
+- **Entrega:** BO exportada pelo device A e importada pelo device B (2 devices fake) com
+  mmap compartilhado bidirecional + fence/sync_file sobre o resv. → **Entregue**
+  (`dma_buf_test()` PASSA no boot).
 
-### Dev 2 — DRM Scheduler
-- Criar `kernel/drivers/drm/drm_sched.c`: job queue, entity, runqueue com workqueue existente, timeout/recovery.
-- **Entrega:** fila de 1000 jobs completa em ordem; job que faz timeout é abortado + callback de recovery.
+### Dev 2 — DRM Scheduler ✅
+- Criado `kernel/drivers/drm/drm_sched.c` + `kernel/include/drm/drm_sched.h`:
+  entity FIFO por stream, runqueue com round-robin entre entities, pump sobre o
+  workqueue nativo, timeout/recovery via `ops->timedout_job`.
+- **Entrega:** fila de 1000 jobs completa EM ORDEM (verificação de seqno/estado);
+  job preso estoura timeout (3 ticks) → é abortado com `timedout_job()` e sinaliza
+  `-ETIMEDOUT`; pipeline se recupera e processa os jobs seguintes. Round-robin
+  entre 2 entities validado (+50 jobs). → **Entregue** (`drm_sched_test()` PASSA).
 
-### Dev 3 — Atomic KMS base
-- Criar `kernel/drivers/drm/drm_atomic.c`: plane/crtc/encoder/connector, propriedades, commit com estado validado.
-- **Entrega:** commit atômico de CRTC+connector com rollback em caso de validação falhar (teste unitário no kernel).
+### Dev 3 — Atomic KMS base ✅
+- Criado `kernel/drivers/drm/drm_atomic.c` + `kernel/include/drm/drm_atomic.h`:
+  mode_config por device (crtc/encoder/connector/plane), state com snapshot old/new,
+  setters tipados + properties nomeadas, validação completa e commit all-or-nothing
+  (rollback = nenhum campo instalado em caso de rejeição), hook opcional do driver.
+- **Entrega:** commit atômico CRTC+encoder+connector+plane válido aplicado e lido de
+  volta; commits inválidos (FB ausente com crtc ativo, possible_crtcs sem suporte,
+  plane maior que o modo) rejeitados com rollback verificado do estado anterior.
+  → **Entregue** (`drm_atomic_test()` PASSA).
 
-### Dev 4 — Compat Layer headers
-- Criar `kernel/include/compat/linux_*.h` (list, mutex, work, fence, dma_buf, module) — wrappers `static inline` finos, 1:1 com nativos.
-- Não vazar `kmalloc/list.h` pro kernel: revisar include e proibir no review.
-- **Entrega:** `drm/core` compila 100% usando headers compat; documentar convenção no header.
+### Dev 4 — Compat Layer headers ✅
+- Criados `kernel/include/compat/linux_*.h`: types (u8..u64/container_of/min/max),
+  list (list_head completo), mutex, spinlock, work, fence, dma_buf, module — wrappers
+  finos 1:1 com as APIs nativas; convenção documentada em cada header (nomes que já
+  existem no nativo NÃO são redeclarados — evita colisão de símbolos).
+- Não vaza kmalloc/list.h pro kernel: headers privados em `compat/`, revisão pela
+  convenção dos comentários.
+- **Entrega:** TU dedicado `kernel/drivers/drm/compat_check.c` compila usando TODOS os
+  headers e valida runtime no boot (list/mutex/spinlock/work/fence/module). → **Entregue**
+  (`compat_layer_test()` PASSA).
+
+> **Correções de kernel base exigidas pelos testes da fase** (regra: dev bloqueado
+> conserta o gap como prioridade):
+> - `idt.c`: `interrupt_handler()` não enviava EOI ao PIC — cada IRQ era entregue uma
+>   única vez e o PIT/teclado congelavam. EOI adicionado (master+slave). O scheduler
+>   preemptivo e o timeout do drm_sched dependem disso.
+> - `kernel.c`: `workqueue_init()` não era chamada na sequência de boot — `system_wq`
+>   era NULL (rtc/threaded IRQ enfileiravam no vazio). Chamada adicionada após kheap.
+> - `Makefile`: regra malformada residual (`: vgpu/...gfx8.c`) removida; novos objetos
+>   integrados.
 
 ---
 
@@ -131,7 +163,8 @@
 
 ## Ordem de execução & dependências
 
-- **Fase 3 trava na Fase 1+2** (GEM/fence/sched/compat prontos). Fase 2 pode começar em paralelo com o fim da Fase 1.
+- **Fase 3 trava na Fase 1+2** (GEM/fence/sched/compat prontos). ✅ Fases 1 e 2 concluídas.
 - ✅ **Fase 1 concluída** — DRM core, GEM, dma-fence/dma-resv, firmware loader e DMA API já no `master`, com selftests rodando no boot (`drm_gem_test()`, `dma_test_run_all()`).
-- Dev 3 (KMS base) e Dev 1 (drm core) precisam alinhar a API de commit antes da Fase 4.
+- ✅ **Fase 2 concluída** — dma-buf/PRIME, drm_sched (timeout/recovery), atomic KMS base e compat layer no `master`, com selftests no boot (`dma_buf_test()`, `drm_sched_test()`, `drm_atomic_test()`, `compat_layer_test()`).
+- Dev 3 (KMS base) e Dev 1 (drm core) precisam alinhar a API de commit antes da Fase 4. → **Feito na Fase 2**: `drm_atomic_funcs.commit` é o hook de instalação para o DC.
 - **Gate de qualidade:** nada entra em `compat/` ou `drm/` sem code review do tech lead (regra do doc, seção 7).
