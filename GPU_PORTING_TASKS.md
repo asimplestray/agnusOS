@@ -8,8 +8,8 @@
 | 1 | Infra DRM Core + Memória | Mês 1 | ✅ **Concluída** |
 | 2 | Scheduler, Atomic KMS base, Compat Layer | Mês 1–2 | ✅ **Concluída** |
 | 3 | amdgpu v0.1.0 MINIMAL (sem DC) | Mês 2–3 | ✅ **Concluída** |
-| 4 | Display Core (DC) por geração | Mês 3–5 | 🔲 Próxima |
-| 5 | DPM/PowerPlay + Compute + Validação | Mês 5–6 | 🔲 |
+| 4 | Display Core (DC) por geração | Mês 3–5 | ✅ **Concluída** (subset vgpu) |
+| 5 | DPM/PowerPlay + Compute + Validação | Mês 5–6 | 🔲 Próxima |
 
 ---
 
@@ -210,13 +210,56 @@
   (restaurado no chip_reset do gfx8); `run-test.sh` dessincronizado da árvore
   (path hardcoded + cópias fonte→qemu agora sincronizadas antes do boot).
 
+## Fase 4 — Display Core (DC) por geração ✅ CONCLUÍDA (subset vgpu)
+
+> Código em `kernel/drivers/gpu/amd/amdgpu/dc/` + `kernel/include/amdgpu_dc.h`.
+> Estrutura do DC real (dal core / resource pool / stream / link) portada como
+> framework nativo; a programação de registros usa o subset de display da
+> emulação vgpu (mesmos offsets DCE/DCN documentados no `amd_core.h` do fork).
+> Tabelas de offsets reais por ASIC entram quando houver hardware/emulador que
+> as modele — o framework já está no formato delas.
+
+### Dev 1 — DCE 8/10/11 ✅
+- `dce_resource.c`: resource pools por família (DCE 8/10/11) com
+  `apply_stream` (blank → timing → GRPH → HDP flush → unblank) e `set_power`.
+- **Entrega:** modeset via DC (não fbdev direto) em Polaris — boot mostra
+  `[amdgpu-mode] DC commit OK — scanout via Display Core, pool=DCE 11`. → **Entregue.**
+
+### Dev 2 — DCN 1/2 (Vega, Navi 1x/2x) ✅
+- `dcn_resource.c`: pools DCN 1.x/2.x; Navi22 adicionado à detect do driver
+  (`0x73DF`) e ao emulador (scanout + HPD no gfx10).
+- **Entrega:** caminho DCN pronto e validável no `amd-rx6700xt`; mesmo
+  pipeline de scanout/policy do DCE. → **Entregue** (estrutura; validação
+  completa de DCN fica para quando o emulador modelar HUBP/OPTC reais).
+
+### Dev 3 — Link/transmitter + MST ✅
+- `dc_core.c`: `dc_link` com HPD lido do registrador da emulação
+  (`AMD_DCE_HPD0_STATUS`, reflete property QOM `hpd` toggleável em runtime);
+  poll no idle tick com eventos CONNECT/DISCONNECT — disconnect blanka,
+  reconnect re-aplica o stream automaticamente.
+- Gerenciador MST (payload table): alloc/free/idempotência com selftest puro;
+  hub AUX real não existe na emulação (documentado).
+- **Entrega:** hotplug validado end-to-end via QMP (`qom-set hpd=false/true`)
+  com blank/recover visíveis no serial e no scanout. → **Entregue.**
+
+### Dev 4 — Atomic commit DC + substituição do fbdev ✅
+- Commit atômico do DC valida contra HPD antes de tocar HW; falha preserva o
+  estado anterior. Flip double-buffer tear-free (`dc_flip`) trocando só o
+  endereço GRPH — o test pattern agora renderiza em back buffer e entra no
+  scanout por flip.
+- Modestest interno: 1080p → 720p@60 → retorno 1080p pelo caminho DC completo,
+  com readback de X_END (selftest no boot). fbdev direto permanece só como
+  fallback caso o DC não suba.
+- **Entrega:** troca de resolução sem tearing validada. → **Entregue.**
+
 ---
 
 ## Ordem de execução & dependências
 
-- **Fase 3 trava na Fase 1+2** (GEM/fence/sched/compat prontos). ✅ Fases 1, 2 e 3 concluídas.
+- **Fase 4 depende das Fases 1–3** (todas concluídas). ✅ Fases 1–4 concluídas.
 - ✅ **Fase 1 concluída** — DRM core, GEM, dma-fence/dma-resv, firmware loader e DMA API já no `master`, com selftests rodando no boot (`drm_gem_test()`, `dma_test_run_all()`).
 - ✅ **Fase 2 concluída** — dma-buf/PRIME, drm_sched (timeout/recovery), atomic KMS base e compat layer no `master`, com selftests no boot (`dma_buf_test()`, `drm_sched_test()`, `drm_atomic_test()`, `compat_layer_test()`).
 - ✅ **Fase 3 concluída** — amdgpu v0.1.0 MINIMAL no `master`: detect/reset/rmmio, VRAM/GTT mgr sobre GEM, modeset DCE com scanout real na emulação, GFX ring integrado ao sched + thermal/pattern; selftests no boot quando há ASIC suportada (`amdgpu_mem_selftest()`, `amdgpu_display_selftest()`, `amdgpu_gfx_selftest()`).
-- Dev 3 (KMS base) e Dev 1 (drm core) precisam alinhar a API de commit antes da Fase 4. → **Feito na Fase 2**: `drm_atomic_funcs.commit` é o hook de instalação para o DC.
+- ✅ **Fase 4 concluída** — DC nativo (`kernel/drivers/gpu/amd/amdgpu/dc/`): resource pools DCE/DCN, commit atômico com validação de HPD, flip double-buffer sem tearing, hotplug end-to-end via QMP (`qom-set hpd`), modestest interno; selftest `amdgpu_dc_selftest()` no boot.
+- Dev 3 (KMS base) e Dev 1 (drm core) alinharam a API de commit na Fase 2: `drm_atomic_funcs.commit` é o hook de instalação para o DC.
 - **Gate de qualidade:** nada entra em `compat/` ou `drm/` sem code review do tech lead (regra do doc, seção 7).

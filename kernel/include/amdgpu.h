@@ -26,6 +26,8 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_sched.h>
 
+struct dc_context;
+
 /* ---- Identificação ---- */
 #define AMDGPU_VENDOR_ID        0x1002
 
@@ -33,7 +35,9 @@ enum amdgpu_asic_type {
     CHIP_UNKNOWN = 0,
     CHIP_POLARIS10,     /* RX 470/480 — 0x67DF */
     CHIP_POLARIS11,     /* RX 570/580 — 0x67FF/0x67EF */
-    CHIP_POLARIS12,     /* RX 590    — 0x67DF rev maior */
+    CHIP_POLARIS12,     /* RX 590    — 0x6987 */
+    CHIP_VEGA10,        /* Vega 56/64 (DCN 1.x) — reservado Fase 4+ */
+    CHIP_NAVI22,        /* RX 6700 XT — 0x73DF (DCN 2.x) */
 };
 
 struct amdgpu_asic_entry {
@@ -78,6 +82,9 @@ struct amdgpu_asic_entry {
 #define mmCRTC0_GRPH_X_END          0x001B114
 #define mmCRTC0_GRPH_Y_END          0x001B118
 #define mmCRTC0_GRPH_FORMAT         0x001B11C
+
+/* HPD (Fase 4): reflete a property `hpd_connected` da vgpu */
+#define mmHPD0_STATUS               0x001B200
 
 #define AMDGPU_CRTC_ENABLE          0x1u
 #define AMDGPU_GRPH_FORMAT_32BPP    4u
@@ -129,11 +136,14 @@ struct amdgpu_device {
     /* Gerência de memória (GEM nativo como VRAM/GTT mgr — Dev 2) */
     struct drm_device ddev;     /* identidade p/ o gerenciador GEM */
 
-    /* Display (Dev 3) */
+    /* Display (Dev 3 / Fase 4: DC nativo + fallback fbdev) */
     uint32_t    mode_w, mode_h, mode_bpp, pitch;
-    struct drm_gem_object *fb_bo;
-    void       *fb_vaddr;       /* kernel mapping do BO de scanout */
+    struct drm_gem_object *fb_bo;       /* buffer A (scanout)          */
+    struct drm_gem_object *fb_bo_b;     /* buffer B (flip, Fase 4)     */
+    void       *fb_vaddr;
     uint64_t    fb_vram_off;    /* offset do BO dentro do BAR1     */
+    bool        use_dc;         /* display core ativo (senão fbdev) */
+    struct dc_context *dc_ctx;
 
     /* GFX ring (Dev 4) */
     struct drm_gem_object *ring_bo;

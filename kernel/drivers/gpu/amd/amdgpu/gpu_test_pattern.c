@@ -6,11 +6,13 @@
  *
  * Entrega da tarefa: pattern 24/7 sem hang. Execução: loop idle do
  * kernel via amdgpu_idle_tick() — a v0.1.0 não tem worker threads e o
- * workqueue nativo é passivo. O bulk dos pixels vai por cópia CPU até
- * existir SDMA (Fase 5); o GFX ring sinaliza o fence de frame.
+ * workqueue nativo é passivo. Frames vão para o BACK buffer e entram
+ * no scanout via dc_flip (Fase 4, sem tearing); fence de frame sai
+ * pelo GFX ring.
  */
 
 #include <amdgpu.h>
+#include <amdgpu_dc.h>
 #include <timer.h>
 #include <string.h>
 #include <serial.h>
@@ -21,6 +23,10 @@
 
 static uint32_t pattern_palette[256];
 static bool palette_ready;
+static void *pat_front_v;           /* front buffer (em scanout)    */
+static void *pat_back_v;            /* back buffer (desenho)        */
+static struct drm_gem_object *bo_front;
+static struct drm_gem_object *bo_back;
 
 static void pattern_build_palette(void)
 {
@@ -51,14 +57,20 @@ static void pattern_build_palette(void)
     palette_ready = true;
 }
 
-/* Um frame completo do gradiente diagonal animado */
+/* Um frame completo do gradiente diagonal animado.
+ * Desenha no BACK buffer e entra no scanout via dc_flip (Fase 4,
+ * sem tearing); o fence de frame sai pelo GFX ring. */
 static void pattern_draw_frame(struct amdgpu_device *adev)
 {
-    uint32_t *fb = adev->fb_vaddr;
+    uint32_t *fb;
     uint32_t pitch_px = adev->pitch / 4;
     uint8_t hue_shift = (uint8_t)(adev->frame_count * 5);
 
     if (!palette_ready)
+        return;
+
+    fb = pat_back_v ? pat_back_v : adev->fb_vaddr;
+    if (!fb)
         return;
 
     for (uint32_t y = 0; y < adev->mode_h; y++) {
@@ -72,7 +84,23 @@ static void pattern_draw_frame(struct amdgpu_device *adev)
         }
     }
 
-    /* fence de frame pelo GFX ring (plumagem CP honesta na emulação) */
+    /* flip: back vira front sem blanking (sem tearing) */
+    if (pat_back_v && bo_back && adev->dc_ctx && adev->use_dc) {
+        uint64_t off = bo_back->phys - adev->vram_phys;
+        if (dc_flip(adev->dc_ctx, off) == 0) {
+            void *tv = pat_front_v;
+            struct drm_gem_object *tb = bo_front;
+
+            pat_front_v = pat_back_v;
+            bo_front = bo_back;
+            pat_back_v = tv;
+            bo_back = tb;
+            adev->fb_vaddr = pat_front_v;   /* front é o "oficial" */
+            adev->fb_bo = bo_front;
+        }
+    }
+
+    /* fence de frame pelo GFX ring (contrato EOP na emulação) */
     amdgpu_ring_submit_write_fb(adev,
                                 (uint64_t)adev->frame_count & 0x3Full,
                                 adev->frame_count);
@@ -88,9 +116,18 @@ int amdgpu_gpu_test_pattern_start(void)
     if (!palette_ready)
         pattern_build_palette();
 
+    /* double-buffer (Fase 4): front = A, back = B */
+    pat_front_v = adev->fb_vaddr;
+    bo_front = adev->fb_bo;
+    if (adev->fb_bo_b) {
+        pat_back_v = gem_mmap_phys(adev->fb_bo_b);
+        bo_back = adev->fb_bo_b;
+        memset(pat_back_v, 0x00, adev->pitch * adev->mode_h);
+    }
+
     adev->pattern_enabled = true;
     adev->pattern_last_tick = timer_get_ticks();
-    serial_print("[amdgpu-pattern] ON (~10fps idle-driven)\n");
+    serial_print("[amdgpu-pattern] ON (~10fps, flip duplo via DC)\n");
     return 0;
 }
 
@@ -117,6 +154,10 @@ void amdgpu_idle_tick(void)
         return;
 
     now = timer_get_ticks();
+
+    /* HPD: hotplug detectado no idle (Fase 4 Dev 3) */
+    if (adev->dc_ctx && adev->dc_ctx->ready)
+        dc_hpd_poll(adev->dc_ctx);
 
     if (adev->thermal_running &&
         now - adev->thermal_last_tick >= AMDGPU_THERMAL_POLL_TICKS) {

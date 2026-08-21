@@ -35,7 +35,8 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
       build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
       build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
-      build/amdgpu_gfx.o build/thermal_monitor.o build/gpu_test_pattern.o
+      build/amdgpu_gfx.o build/thermal_monitor.o build/gpu_test_pattern.o \
+      build/dc_core.o build/dce_resource.o build/dcn_resource.o
 
 # Output
 ISO_OUT = apolloos.iso
@@ -337,7 +338,22 @@ build/thermal_monitor.o: kernel/drivers/gpu/amd/amdgpu/thermal_monitor.c kernel/
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
-build/gpu_test_pattern.o: kernel/drivers/gpu/amd/amdgpu/gpu_test_pattern.c kernel/include/amdgpu.h
+build/gpu_test_pattern.o: kernel/drivers/gpu/amd/amdgpu/gpu_test_pattern.c kernel/include/amdgpu.h kernel/include/amdgpu_dc.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dc_core.o: kernel/drivers/gpu/amd/amdgpu/dc/dc_core.c kernel/include/amdgpu_dc.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dce_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dce_resource.c kernel/include/amdgpu_dc.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dcn_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dcn_resource.c kernel/include/amdgpu_dc.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

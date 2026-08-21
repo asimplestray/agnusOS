@@ -23,6 +23,7 @@
 - **apollo_drv.c**: driver de validação que exercita DRM core + GEM + fence + ring + IRQ de ponta a ponta (base pra compat layer do amdgpu) ✅
 - **Fase 2 do port**: dma-buf/PRIME + sync_file, drm_sched (entity/runqueue/timeout-recovery), atomic KMS base (commit all-or-nothing + rollback), compat layer `compat/linux_*.h` — selftests no boot ✅
 - **Fase 3 do port**: amdgpu v0.1.0 MINIMAL — detect Polaris10/11/12, rmmio/VRAM aperture, VRAM/GTT mgr sobre GEM, modeset DCE 1920×1080@60 com BO VRAM, GFX ring (WPTR/RPTR + pacotes WRITE_DATA/FENCE) integrado ao drm_sched, thermal monitor (SMC) e test pattern animado no idle; scanout real na emulação vgpu (`vgpu_dce.c`) — screenshot `screenshot6_amdgpu_rx480.png` ✅
+- **Fase 4 do port**: DC nativo (`amdgpu_dc.h`, `dc/dc_core.c`, `dc/dce_resource.c`, `dc/dcn_resource.c`) — resource pools por família, commit atômico com validação de HPD, flip double-buffer tear-free, hotplug runtime via property QOM `hpd` da vgpu, MST payload manager com selftest, modestest interno (1080p→720p→1080p) ✅
 - **Correções de base**: EOI do PIC no `interrupt_handler` (IRQs congelavam após a 1ª entrega), `workqueue_init()` na sequência de boot e probe polaris legado removido (sizing de BAR quebrava KVM) ✅
 
 ---
@@ -183,7 +184,8 @@ Ele define o formato da futura compat layer.
 - [x] dma-buf / drm_sched / atomic KMS / compat layer (Fase 2 do port)
 - [x] EOI no `interrupt_handler` (IRQs agora disparam continuamente) + `workqueue_init()` no boot
 - [x] amdgpu v0.1.0 MINIMAL (Fase 3 do port): detect/reset/rmmio, VRAM/GTT mgr, modeset DCE com scanout na vgpu, GFX ring + sched, thermal/pattern
-- [ ] Driver Polaris/amdgpu Fases 4-6 (DC por geração, DPM/PowerPlay, compute/SDMA)
+- [x] DC nativo (Fase 4 do port): pools DCE/DCN, commit atômico + HPD runtime, flip double-buffer, MST framework, modestest interno
+- [ ] Driver Polaris/amdgpu Fase 5 (DPM/PowerPlay, compute/SDMA, CI/validação)
 
 ---
 

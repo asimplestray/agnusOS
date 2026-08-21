@@ -9,6 +9,7 @@
  */
 
 #include <amdgpu.h>
+#include <amdgpu_dc.h>
 #include <pci.h>
 #include <vmm.h>
 #include <kheap.h>
@@ -30,13 +31,14 @@
 
 struct amdgpu_device *amdgpu_adev = NULL;
 
-/* Tabela de device IDs suportada na v0.1.0 (Polaris / VI primeiro) */
+/* Tabela de device IDs suportada (Polaris/VI + Navi22 para o DC da Fase 4) */
 static const struct amdgpu_asic_entry amdgpu_asic_table[] = {
     { 0x67DF, CHIP_POLARIS10, "Polaris10" },
     { 0x67EF, CHIP_POLARIS11, "Polaris11" },
     { 0x67FF, CHIP_POLARIS11, "Polaris11" },
     { 0x6987, CHIP_POLARIS12, "Polaris12" },
-    { 0,      CHIP_UNKNOWN,   NULL },
+    { 0x73DF, CHIP_NAVI22,    "Navi22"    },
+    { 0,      CHIP_UNKNOWN,   NULL        },
 };
 
 void adev_log(const char *tag, vga_color_t color, const char *fmt, ...)
@@ -301,6 +303,10 @@ int amdgpu_init(void)
     amdgpu_mem_selftest();
     amdgpu_display_selftest();
     amdgpu_gfx_selftest();
+
+    /* Fase 4: selftest do DC (MST + HPD + modestest interno) */
+    if (adev->use_dc)
+        amdgpu_dc_selftest();
 
     /* Runtime Dev 4: térmico + test pattern contínuo (24/7) */
     amdgpu_thermal_monitor_start();
