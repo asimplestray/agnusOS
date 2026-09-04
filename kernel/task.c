@@ -521,7 +521,7 @@ void do_signal(struct interrupt_frame *frame) {
 }
 
 /* Signal syscall implementations */
-int64_t sys_rt_sigaction(int sig, const sigaction_t *act, sigaction_t *oldact, size_t sigsetsize, struct interrupt_frame *frame) {
+int64_t aos_signal(int sig, const sigaction_t *act, sigaction_t *oldact, size_t sigsetsize, struct interrupt_frame *frame) {
     (void)frame;
     if (sig <= 0 || sig >= NSIG || sig == SIGKILL || sig == SIGSTOP) {
         return -1; /* EINVAL */
@@ -538,7 +538,7 @@ int64_t sys_rt_sigaction(int sig, const sigaction_t *act, sigaction_t *oldact, s
     return 0;
 }
 
-int64_t sys_rt_sigprocmask(int how, const sigset_t *set, sigset_t *oldset, size_t sigsetsize, struct interrupt_frame *frame) {
+int64_t aos_setsignal(int how, const sigset_t *set, sigset_t *oldset, size_t sigsetsize, struct interrupt_frame *frame) {
     (void)frame;
     if (oldset) {
         for (int i = 0; i < _NSIG_WORDS; i++) {
@@ -574,7 +574,7 @@ int64_t sys_rt_sigprocmask(int how, const sigset_t *set, sigset_t *oldset, size_
     return 0;
 }
 
-int64_t sys_rt_sigreturn(struct interrupt_frame *frame) {
+int64_t aos_return_signal(struct interrupt_frame *frame) {
     if (!current || !frame) return -1;
     
     /* The user stack pointer (frame->rsp) points to the ucontext_t structure
@@ -631,7 +631,7 @@ int64_t sys_rt_sigreturn(struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_kill(int64_t pid, int64_t sig, struct interrupt_frame *frame) {
+int64_t aos_send_signal(int64_t pid, int64_t sig, struct interrupt_frame *frame) {
     (void)frame;
     if (sig <= 0 || sig >= NSIG) return -1;
     

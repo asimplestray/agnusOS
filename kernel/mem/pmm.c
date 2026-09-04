@@ -94,10 +94,22 @@ void pmm_init(uint64_t mbi_addr) {
     bitmap_size = total_pages / 8;
     free_pages = 0;
 
-    // 3. Position the PMM bitmap in memory after BOTH the kernel and the Multiboot structure to prevent overwrite!
+    // 3. Position the PMM bitmap after kernel, mbi AND all multiboot modules (initrd) to prevent overwrite!
     uint64_t kernel_end_addr = (uint64_t)_kernel_end;
     uint64_t mbi_end_addr = mbi_addr + mbi_size;
     uint64_t safe_start = (kernel_end_addr > mbi_end_addr) ? kernel_end_addr : mbi_end_addr;
+    // Also consider initrd/modules end (commit c32c427 grew kernel close to 0x177000)
+    {
+        struct multiboot_tag *t = (struct multiboot_tag *)(mbi_addr + 8);
+        while (t->type != MULTIBOOT_TAG_TYPE_END) {
+            if (t->type == MULTIBOOT_TAG_TYPE_MODULE) {
+                struct multiboot_tag_module *m = (struct multiboot_tag_module *)t;
+                uint64_t mod_end = (uint64_t)m->mod_end;
+                if (mod_end > safe_start) safe_start = mod_end;
+            }
+            t = (struct multiboot_tag *)(((uintptr_t)t) + ((t->size + 7) & ~7));
+        }
+    }
     pmm_bitmap = (uint8_t*)ALIGN_4K(safe_start);
 
     // 4. Initially, mark all pages as reserved/used (1)
