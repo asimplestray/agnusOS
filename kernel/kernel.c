@@ -133,6 +133,8 @@ void kernel_main(void) {
         task_init();
         serial_print("ApolloOS: task_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Task scheduler ok.");
+
+        workqueue_start_kworker();
         
         pci_enum();
         serial_print("ApolloOS: pci_enum done\n");

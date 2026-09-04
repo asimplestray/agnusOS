@@ -174,11 +174,23 @@ int pci_enable_msix(uint8_t bus, uint8_t dev, uint8_t func, uint32_t *vectors, i
     
     volatile uint32_t *table = (volatile uint32_t *)0xFFFF800200000000ULL;
     
-    /* Configure each vector */
+    /* Configure each vector — P1.2: usa APIC MSI address/data corretos.
+     * vectors[i] pode ser número do vetor (0-255) ou endereço já codificado;
+     * se <256 tratamos como vector number e codificamos APIC. */
     for (int i = 0; i < num_vectors; i++) {
-        table[i * 4 + 0] = vectors[i];           /* Message address low */
+        uint32_t vec = vectors[i];
+        uint32_t msg_addr_lo, msg_data;
+        if (vec < 256) {
+            // Vector number → APIC MSI: addr 0xFEE00000 (BSP), data = vector + 0x4000 (level edge)
+            msg_addr_lo = 0xFEE00000u;
+            msg_data = 0x4000u | (vec & 0xFFu);
+        } else {
+            msg_addr_lo = vec;
+            msg_data = 0;
+        }
+        table[i * 4 + 0] = msg_addr_lo;          /* Message address low */
         table[i * 4 + 1] = 0;                    /* Message address high */
-        table[i * 4 + 2] = 0;                    /* Message data (will be set by APIC) */
+        table[i * 4 + 2] = msg_data;             /* Message data */
         table[i * 4 + 3] = 0;                    /* Vector control (unmasked) */
     }
     
@@ -226,7 +238,11 @@ uint64_t pci_get_bar_size(uint8_t bus, uint8_t dev, uint8_t func, uint8_t bar) {
     return (~(size & ~0xF)) + 1;
 }
 
-/* Map PCI BAR with write-combine support for framebuffer/MMIO */
+/* Map PCI BAR with write-combine support for framebuffer/MMIO
+ * FIX P0.3: BAR sizing via config space (write 0xFFFFFFFF) invalida o slot KVM
+ * para GPUs AMD. Para GPUs (vendor 0x1002) usamos tamanho fixo baseado no
+ * dev_id/bar_idx igual ao amdgpu_device.c (BAR0 16MB vgpu / 256KB real 0x6FDF,
+ * BAR1/BAR0 VRAM 256MB). Para outros dispositivos mantém sizing legado. */
 int pci_map_bar_wc(uint8_t bus, uint8_t dev, uint8_t func, uint8_t bar, uint64_t virt, bool write_combine) {
     uint32_t bar_val = pci_read_bar(bus, dev, func, bar);
     int is_io = bar_val & 1;
@@ -235,9 +251,26 @@ int pci_map_bar_wc(uint8_t bus, uint8_t dev, uint8_t func, uint8_t bar, uint64_t
     }
     
     uint64_t base = bar_val & ~0xFULL;
-    uint64_t size = pci_get_bar_size(bus, dev, func, bar);
-    if (size == 0) {
-        size = 4096; /* Default to 4KB if size detection fails */
+    uint64_t size = 0;
+    uint16_t vendor = pci_read_word(bus, dev, func, 0);
+    if (vendor == 0x1002) {
+        uint16_t dev_id = pci_read_word(bus, dev, func, 2);
+        /* Polaris real 0x6FDF: BAR0 VRAM 256MB, BAR5 MMIO 256KB
+         * vgpu/others: BAR0 MMIO 16MB, BAR1 VRAM 256MB */
+        if (dev_id == 0x6FDF) {
+            if (bar == 0) size = 256ULL * 1024 * 1024;
+            else if (bar == 5) size = 256ULL * 1024;
+            else size = 4096;
+        } else {
+            if (bar == 0) size = 16ULL * 1024 * 1024;
+            else if (bar == 1) size = 256ULL * 1024 * 1024;
+            else size = 4096;
+        }
+    } else {
+        size = pci_get_bar_size(bus, dev, func, bar);
+        if (size == 0) {
+            size = 4096; /* Default to 4KB if size detection fails */
+        }
     }
     
     /* Align size to page boundary */

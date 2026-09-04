@@ -1,6 +1,7 @@
 #include <workqueue.h>
 #include <kheap.h>
 #include <screen.h>
+#include <serial.h>
 #include <timer.h>
 #include <spinlock.h>
 #include <task.h>
@@ -218,4 +219,27 @@ void timerwheel_register_timer(void) {
     timer.function = timerwheel_timer_callback;
     timer.data = 0;
     timer_add(&timer);
+}
+
+/* P1.3: kworker auto-drain — transforma WQ passivo em ativo.
+ * Antes: queue_work() só enfileirava, flush_workqueue() manual.
+ * Agora: thread kernel kworker dorme em hlt e acorda a cada IRQ para drenar
+ * system_wq/system_long_wq + todos os WQs de drivers (via flush). */
+static void kworker_main(void) {
+    serial_print("kworker: started (auto-drain system_wq)\n");
+    while (1) {
+        // Drena as filas principais
+        flush_workqueue(system_wq);
+        flush_workqueue(system_long_wq);
+        // Dorme até próximo IRQ (PIT 100Hz) — schedule() vai acordar
+        __asm__ volatile("hlt");
+    }
+}
+
+void workqueue_start_kworker(void) {
+    // P1.3 TODO: kworker causa #GP em fxsave (alinhamento 16B) — desabilitado por ora.
+    // O WQ continua passivo (flush manual). Fix requer kheap 16B ou task_create sem FPU.
+    // Mantém log para PRE_AMDGPU_TASKS.md:P1.3 como parcial.
+    serial_print("kworker: auto-drain DESABILITADO (P1.3 parcial, WQ passivo)\n");
+    screen_log("WARN", COLOR_BROWN, "kworker: desabilitado (WQ passivo)");
 }

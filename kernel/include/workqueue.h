@@ -50,6 +50,7 @@ int cancel_work_sync(struct work_struct *work);
 int cancel_delayed_work_sync(struct work_struct *work);
 
 void flush_workqueue(struct workqueue_struct *wq);
+void workqueue_start_kworker(void);
 
 /* Timerwheel for delayed work */
 void timerwheel_init(void);
