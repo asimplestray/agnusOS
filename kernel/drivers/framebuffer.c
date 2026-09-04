@@ -34,6 +34,14 @@ int fb_init(uint64_t mbi_addr) {
     return 0; // No framebuffer tag found
 }
 
+int fb_is_ready(void) {
+    return fb_ready;
+}
+
+framebuffer_t* fb_get_info(void) {
+    return fb_ready ? &fb : NULL;
+}
+
 uint32_t fb_get_width(void)  { return fb.width; }
 uint32_t fb_get_height(void) { return fb.height; }
 

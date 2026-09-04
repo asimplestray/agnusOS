@@ -31,6 +31,7 @@
 #include <drm/drm_sched.h>
 #include <drm/drm_atomic.h>
 #include <compat/compat_check.h>
+#include <framebuffer.h>
 #include <amdgpu.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
@@ -39,11 +40,15 @@ void kernel_main(void) {
     serial_init();
     log_init();
     serial_print("ApolloOS: Starting kernel...\n");
+
+    if (multiboot_magic == MULTIBOOT2_MAGIC) {
+        fb_init(multiboot_info);
+    }
     
     screen_init();
     screen_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
-    screen_print("===== ApolloOS v0.2-Alpha (Texto) =====\n");
-    screen_print("Kernel x86_64 - Modo VGA texto simples\n\n");
+    screen_print("===== ApolloOS v0.2-Alpha (Texto/GOP) =====\n");
+    screen_print("Kernel x86_64 inicializado com sucesso\n\n");
     serial_print("ApolloOS: screen_init done\n");
 
     idt_init();

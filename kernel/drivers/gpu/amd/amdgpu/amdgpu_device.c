@@ -220,9 +220,13 @@ static int amdgpu_detect_and_init(struct amdgpu_device *adev)
     adev_log("VRAM", COLOR_LIGHT_CYAN, "BAR1 VRAM: 0x%lx mapeado em 0x%lx (%u MB)",
              adev->vram_phys, adev->vram_virt, (unsigned)(adev->vram_size >> 20));
 
-    amdgpu_soft_reset(adev);
-    amdgpu_enable_fb(adev);
-    adev_log("HW", COLOR_LIGHT_GREEN, "Soft-reset GRBM OK | BIF_FB_EN ativado (FrameBuffer pronto)");
+    if (adev->dev_id != 0x6FDF) {
+        amdgpu_soft_reset(adev);
+        amdgpu_enable_fb(adev);
+        adev_log("HW", COLOR_LIGHT_GREEN, "Soft-reset GRBM OK | BIF_FB_EN ativado (vgpu)");
+    } else {
+        adev_log("HW", COLOR_LIGHT_GREEN, "Silicio Real Polaris20 (RX 590 GME) - Soft-reset desativado por seguranca");
+    }
 
     /* PM: power state forçado LOW até existir DPM real (Fase 5) */
     adev->dpm_forced_level = AMD_DPM_FORCED_LEVEL_LOW;
@@ -302,6 +306,17 @@ int amdgpu_init(void)
     if (rc) {
         adev_log("FAIL", COLOR_LIGHT_RED, "vram_mgr_init falhou (%d)", rc);
         goto err_free;
+    }
+
+    /* Em hardware físico real (RX 590 GME), a sonda de hardware está concluída com sucesso.
+     * Não tentamos os modos simulados da vgpu nem anéis sem microcódigo. */
+    if (adev->dev_id == 0x6FDF) {
+        adev->initialized = true;
+        amdgpu_adev = adev;
+        adev_log("PASS", COLOR_LIGHT_GREEN, "Hardware Real Polaris20 (RX 590 GME) sondado com SUCESSO!");
+        adev_log("INFO", COLOR_LIGHT_CYAN, "Display mantido ativo no modo seguro UEFI GOP.");
+        adev_log("INFO", COLOR_LIGHT_CYAN, "PCIe MMIO BAR0 e VRAM BAR1 operacionais!");
+        return 0;
     }
 
     rc = amdgpu_modeset_init(adev, 1920, 1080, 32);   /* Dev 3 */

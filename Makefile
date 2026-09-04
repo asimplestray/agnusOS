@@ -22,7 +22,7 @@ LDFLAGS = -n -nostdlib -T linker.ld -m elf_x86_64 --no-warn-rwx-segments
 
 # Files
 OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o build/kernel.o \
-      build/screen.o build/timer.o build/keyboard.o build/tty.o \
+      build/screen.o build/framebuffer.o build/timer.o build/keyboard.o build/tty.o \
       build/pmm.o build/vmm.o build/kheap.o build/pci.o \
       build/task.o build/syscall.o build/syscall_asm.o \
       build/vfs.o build/ramfs.o build/elf.o build/pipe.o \
@@ -79,6 +79,11 @@ build/kernel.o: kernel/kernel.c
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/screen.o: kernel/drivers/screen.c
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/framebuffer.o: kernel/drivers/framebuffer.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

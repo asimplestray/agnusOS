@@ -35,6 +35,8 @@ typedef struct {
 // Initialize framebuffer from multiboot2 info
 // Returns 1 on success, 0 if no framebuffer tag found
 int  fb_init(uint64_t mbi_addr);
+int  fb_is_ready(void);
+framebuffer_t* fb_get_info(void);
 
 // Query framebuffer dimensions
 uint32_t fb_get_width(void);
