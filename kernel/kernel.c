@@ -33,6 +33,8 @@
 #include <compat/compat_check.h>
 #include <framebuffer.h>
 #include <amdgpu.h>
+#include <assign.h>
+#include <msgport.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -138,6 +140,11 @@ void kernel_main(void) {
         
         /* Fase 1 Dev 2: GEM selftest (dev3_test-style probe) */
         drm_gem_test();
+
+        /* AmigaOS-style: assigns + message ports (f9b3068) */
+        assign_init();
+        assign_test();
+        msgport_test();
 
         /* Probe legado do polaris.c REMOVIDO: fazia sizing de BAR via
          * config space (quebra o mapeamento KVM) e foi substituído pela

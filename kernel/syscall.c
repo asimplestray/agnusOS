@@ -32,52 +32,59 @@ static int str_eq(const char *a, const char *b)
 static int64_t (*syscall_table[NR_SYSCALLS])(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, struct interrupt_frame *) = {0};
 
 void syscall_init(void) {
-    syscall_table[SYS_EXIT]           = (void *)sys_exit;
-    syscall_table[SYS_FORK]           = (void *)sys_fork;
-    syscall_table[SYS_READ]           = (void *)sys_read;
-    syscall_table[SYS_WRITE]          = (void *)sys_write;
-    syscall_table[SYS_OPEN]           = (void *)sys_open;
-    syscall_table[SYS_CLOSE]          = (void *)sys_close;
-    syscall_table[SYS_WAITPID]        = (void *)sys_waitpid;
-    syscall_table[SYS_EXECVE]         = (void *)sys_execve;
-    syscall_table[SYS_BRK]            = (void *)sys_brk;
-    syscall_table[SYS_MMAP]           = (void *)sys_mmap;
-    syscall_table[SYS_MUNMAP]         = (void *)sys_munmap;
-    syscall_table[SYS_IOCTL]          = (void *)sys_ioctl;
-    syscall_table[SYS_GETPID]         = (void *)sys_getpid;
-    syscall_table[SYS_YIELD]          = (void *)sys_yield;
-    syscall_table[SYS_NANOSLEEP]      = (void *)sys_nanosleep;
-    syscall_table[SYS_GETTIME]        = (void *)sys_gettime;
-    syscall_table[SYS_SPAWN]          = (void *)sys_spawn;
-    syscall_table[SYS_RT_SIGACTION]   = (void *)sys_rt_sigaction;
-    syscall_table[SYS_RT_SIGPROCMASK] = (void *)sys_rt_sigprocmask;
-    syscall_table[SYS_RT_SIGRETURN]   = (void *)sys_rt_sigreturn;
-    syscall_table[SYS_KILL]           = (void *)sys_kill;
-    syscall_table[SYS_PIPE]           = (void *)sys_pipe;
-    syscall_table[SYS_LSEEK]          = (void *)sys_lseek;
-    syscall_table[SYS_STAT]           = (void *)sys_stat;
-    syscall_table[SYS_CLOCK_GETTIME]  = (void *)sys_clock_gettime;
-    syscall_table[SYS_SYSLOG]         = (void *)sys_syslog;
-    syscall_table[SYS_GET_ERRNO]      = (void *)sys_get_errno;
-    syscall_table[SYS_SET_ERRNO]      = (void *)sys_set_errno;
-    syscall_table[SYS_SETPGID]        = (void *)sys_setpgid;
-    syscall_table[SYS_GETPGID]        = (void *)sys_getpgid;
-    syscall_table[SYS_TCSETPGRP]      = (void *)sys_tcsetpgrp;
-    syscall_table[SYS_TCGETPGRP]      = (void *)sys_tcgetpgrp;
-    syscall_table[SYS_MKDIR]          = (void *)sys_mkdir;
-    syscall_table[SYS_RMDIR]          = (void *)sys_rmdir;
-    syscall_table[SYS_UNLINK]         = (void *)sys_unlink;
-    syscall_table[SYS_CHDIR]          = (void *)sys_chdir;
-    syscall_table[SYS_FCHDIR]         = (void *)sys_fchdir;
-    syscall_table[SYS_GETCWD]         = (void *)sys_getcwd;
-    syscall_table[SYS_RENAME]         = (void *)sys_rename;
-    syscall_table[SYS_GETDENTS]       = (void *)sys_getdents;
-    syscall_table[SYS_SOCKET]         = (void *)sys_socket;
-    syscall_table[SYS_BIND]           = (void *)sys_bind;
-    syscall_table[SYS_SENDTO]         = (void *)sys_sendto;
-    syscall_table[SYS_RECVFROM]       = (void *)sys_recvfrom;
-    syscall_table[SYS_SOCK_CLOSE]     = (void *)sys_sock_close;
-    syscall_table[SYS_FSYNC]          = (void *)sys_fsync;
+    syscall_table[AOS_Exit]           = (void *)aos_exit;
+    syscall_table[AOS_SpawnTask]           = (void *)aos_spawn_task;
+    syscall_table[AOS_Read]           = (void *)aos_read;
+    syscall_table[AOS_Write]          = (void *)aos_write;
+    syscall_table[AOS_Open]           = (void *)aos_open;
+    syscall_table[AOS_Close]          = (void *)aos_close;
+    syscall_table[AOS_Wait]        = (void *)aos_wait;
+    syscall_table[AOS_LoadSeg]         = (void *)aos_loadseg;
+    syscall_table[AOS_SetBrk]            = (void *)aos_setbrk;
+    syscall_table[AOS_AllocMem]           = (void *)aos_allocmem;
+    syscall_table[AOS_FreeMem]         = (void *)aos_freemem;
+    syscall_table[AOS_DoIO]          = (void *)aos_doio;
+    syscall_table[AOS_FindTask]         = (void *)aos_find_task;
+    syscall_table[AOS_Yield]          = (void *)aos_yield;
+    syscall_table[AOS_Delay]      = (void *)aos_delay;
+    syscall_table[AOS_GetSysTime]        = (void *)aos_getsystime;
+    syscall_table[AOS_AddTask]          = (void *)aos_addtask;
+    syscall_table[AOS_Signal]   = (void *)aos_signal;
+    syscall_table[AOS_SetSignal] = (void *)aos_setsignal;
+    syscall_table[AOS_ReturnSignal]   = (void *)aos_return_signal;
+    syscall_table[AOS_SendSignal]           = (void *)aos_send_signal;
+    syscall_table[AOS_Pipe]           = (void *)aos_pipe;
+    syscall_table[AOS_Seek]          = (void *)aos_seek;
+    syscall_table[AOS_Examine]           = (void *)aos_examine;
+    syscall_table[AOS_Clock]  = (void *)aos_clock;
+    syscall_table[AOS_PutStr]         = (void *)aos_putstr;
+    syscall_table[AOS_IoErr]      = (void *)aos_ioerr;
+    syscall_table[AOS_SetIoErr]      = (void *)aos_set_ioerr;
+    syscall_table[AOS_SetProcGroup]        = (void *)aos_set_procgroup;
+    syscall_table[AOS_GetProcGroup]        = (void *)aos_get_procgroup;
+    syscall_table[AOS_SetConProc]      = (void *)aos_set_conproc;
+    syscall_table[AOS_GetConProc]      = (void *)aos_get_conproc;
+    syscall_table[AOS_CreateDir]          = (void *)aos_create_dir;
+    syscall_table[AOS_DeleteDir]          = (void *)aos_delete_dir;
+    syscall_table[AOS_DeleteFile]         = (void *)aos_delete_file;
+    syscall_table[AOS_CurrentDir]          = (void *)aos_current_dir;
+    syscall_table[AOS_CurrentDirFD]         = (void *)aos_current_dir_fd;
+    syscall_table[AOS_LockCWD]         = (void *)aos_lock_cwd;
+    syscall_table[AOS_Rename]         = (void *)aos_rename;
+    syscall_table[AOS_ExamineDir]       = (void *)aos_examine_dir;
+    syscall_table[AOS_Socket]         = (void *)aos_socket;
+    syscall_table[AOS_Bind]           = (void *)aos_bind;
+    syscall_table[AOS_Send]         = (void *)aos_send;
+    syscall_table[AOS_Recv]       = (void *)aos_recv;
+    syscall_table[AOS_CloseSocket]     = (void *)aos_close_socket;
+    syscall_table[AOS_Flush]          = (void *)aos_flush;
+    syscall_table[AOS_Assign]         = (void *)aos_assign;
+    syscall_table[AOS_CreatePort] = (void *)aos_create_port;
+    syscall_table[AOS_DeletePort] = (void *)aos_delete_port;
+    syscall_table[AOS_PutMsg]    = (void *)aos_put_msg;
+    syscall_table[AOS_GetMsg]    = (void *)aos_get_msg;
+    syscall_table[AOS_WaitPort]   = (void *)aos_wait_port;
+    syscall_table[AOS_ReplyMsg]  = (void *)aos_reply_msg;
 }
 
 void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, struct interrupt_frame *frame) {
@@ -99,13 +106,13 @@ void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64
  * Process management
  * ---------------------------------------------------------------------- */
 
-int64_t sys_exit(int64_t code, struct interrupt_frame *frame) {
+int64_t aos_exit(int64_t code, struct interrupt_frame *frame) {
     (void)frame;
     task_exit((int)code);
     return 0;
 }
 
-int64_t sys_fork(struct interrupt_frame *frame) {
+int64_t aos_spawn_task(struct interrupt_frame *frame) {
     task_struct_t *child = task_create((void (*)(void))current->rip, 0);
     if (!child) return -1;
 
@@ -172,7 +179,7 @@ int64_t sys_fork(struct interrupt_frame *frame) {
     return (int64_t)child->pid;
 }
 
-int64_t sys_getpid(struct interrupt_frame *frame) {
+int64_t aos_find_task(struct interrupt_frame *frame) {
     (void)frame;
     return (int64_t)(current ? current->pid : 0);
 }
@@ -189,7 +196,7 @@ int64_t sys_getpid(struct interrupt_frame *frame) {
 #define WSTOPSIG(status) (((status) >> 8) & 0xFF)
 #define WIFCONTINUED(status) (((status) & 0xFFFF) == 0xFFFF)
 
-int64_t sys_waitpid(int64_t pid, int64_t *status, int64_t options, struct interrupt_frame *frame) {
+int64_t aos_wait(int64_t pid, int64_t *status, int64_t options, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -ECHILD;
     
@@ -290,13 +297,13 @@ int64_t sys_waitpid(int64_t pid, int64_t *status, int64_t options, struct interr
  * Errno support
  * ---------------------------------------------------------------------- */
 
-int64_t sys_get_errno(struct interrupt_frame *frame) {
+int64_t aos_ioerr(struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return 0;
     return (int64_t)current->errno_val;
 }
 
-int64_t sys_set_errno(int64_t errno_val, struct interrupt_frame *frame) {
+int64_t aos_set_ioerr(int64_t errno_val, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -1;
     current->errno_val = (int)errno_val;
@@ -307,7 +314,7 @@ int64_t sys_set_errno(int64_t errno_val, struct interrupt_frame *frame) {
  * Process groups + job control
  * ---------------------------------------------------------------------- */
 
-int64_t sys_setpgid(int64_t pid, int64_t pgid, struct interrupt_frame *frame) {
+int64_t aos_set_procgroup(int64_t pid, int64_t pgid, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -1;
     
@@ -341,7 +348,7 @@ int64_t sys_setpgid(int64_t pid, int64_t pgid, struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_getpgid(int64_t pid, struct interrupt_frame *frame) {
+int64_t aos_get_procgroup(int64_t pid, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -1;
     
@@ -365,7 +372,7 @@ int64_t sys_getpgid(int64_t pid, struct interrupt_frame *frame) {
 }
 
 /* TTY process group - implemented with tty driver */
-int64_t sys_tcsetpgrp(int64_t fd, int64_t pgid, struct interrupt_frame *frame) {
+int64_t aos_set_conproc(int64_t fd, int64_t pgid, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -EBADF;
     if (fd < 0 || fd >= 256) return -EBADF;
@@ -392,7 +399,7 @@ int64_t sys_tcsetpgrp(int64_t fd, int64_t pgid, struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_tcgetpgrp(int64_t fd, struct interrupt_frame *frame) {
+int64_t aos_get_conproc(int64_t fd, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -EBADF;
     if (fd < 0 || fd >= 256) return -EBADF;
@@ -402,7 +409,7 @@ int64_t sys_tcgetpgrp(int64_t fd, struct interrupt_frame *frame) {
     return (int64_t)console_tty->fg_pgrp;
 }
 
-int64_t sys_yield(struct interrupt_frame *frame) {
+int64_t aos_yield(struct interrupt_frame *frame) {
     (void)frame;
     extern volatile uint64_t need_resched;
     need_resched = 1;
@@ -414,7 +421,7 @@ static void nanosleep_callback(uint64_t task_ptr) {
     task->state = TASK_STATE_RUNNING;
 }
 
-int64_t sys_nanosleep(const struct timespec *req, struct timespec *rem, struct interrupt_frame *frame) {
+int64_t aos_delay(const struct timespec *req, struct timespec *rem, struct interrupt_frame *frame) {
     (void)frame;
     if (!req) return -1;
     (void)rem;
@@ -438,7 +445,7 @@ int64_t sys_nanosleep(const struct timespec *req, struct timespec *rem, struct i
     return 0;
 }
 
-int64_t sys_gettime(struct timespec *ts, struct interrupt_frame *frame) {
+int64_t aos_getsystime(struct timespec *ts, struct interrupt_frame *frame) {
     (void)frame;
     if (!ts) return -1;
     if (!rtc_is_initialized()) return -1;
@@ -449,7 +456,7 @@ int64_t sys_gettime(struct timespec *ts, struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_clock_gettime(int64_t clk_id, struct timespec *ts, struct interrupt_frame *frame) {
+int64_t aos_clock(int64_t clk_id, struct timespec *ts, struct interrupt_frame *frame) {
     (void)frame;
     if (!ts) return -1;
     if (!rtc_is_initialized()) return -1;
@@ -461,7 +468,7 @@ int64_t sys_clock_gettime(int64_t clk_id, struct timespec *ts, struct interrupt_
     return 0;
 }
 
-int64_t sys_syslog(int type, char *buf, int len, struct interrupt_frame *frame) {
+int64_t aos_putstr(int type, char *buf, int len, struct interrupt_frame *frame) {
     (void)frame;
     extern void log_read(char *buf, int len, int *out_len);
     extern int log_get_len(void);
@@ -476,7 +483,7 @@ int64_t sys_syslog(int type, char *buf, int len, struct interrupt_frame *frame) 
     return -1;
 }
 
-int64_t sys_spawn(void (*entry)(void), uint64_t flags, struct interrupt_frame *frame) {
+int64_t aos_addtask(void (*entry)(void), uint64_t flags, struct interrupt_frame *frame) {
     (void)frame;
     task_struct_t *task = task_create(entry, flags);
     if (!task) return -1;
@@ -520,7 +527,7 @@ static void free_file(file_t *f) {
  * VFS-backed syscalls
  * ---------------------------------------------------------------------- */
 
-int64_t sys_open(const char *pathname, int64_t flags, int64_t mode, struct interrupt_frame *frame) {
+int64_t aos_open(const char *pathname, int64_t flags, int64_t mode, struct interrupt_frame *frame) {
     (void)frame;
     if (!pathname) return -EINVAL;
 
@@ -597,7 +604,7 @@ int64_t sys_open(const char *pathname, int64_t flags, int64_t mode, struct inter
     return (int64_t)fd;
 }
 
-int64_t sys_close(int64_t fd, struct interrupt_frame *frame) {
+int64_t aos_close(int64_t fd, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -1;
     if (fd < 0 || fd >= 256) return -1;
@@ -608,7 +615,7 @@ int64_t sys_close(int64_t fd, struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_read(int64_t fd, void *buf, int64_t count, struct interrupt_frame *frame) {
+int64_t aos_read(int64_t fd, void *buf, int64_t count, struct interrupt_frame *frame) {
     (void)frame;
     if (!buf || count <= 0) return -EINVAL;
     
@@ -648,7 +655,7 @@ int64_t sys_read(int64_t fd, void *buf, int64_t count, struct interrupt_frame *f
     return (int64_t)ret;
 }
 
-int64_t sys_write(int64_t fd, const void *buf, int64_t count, struct interrupt_frame *frame) {
+int64_t aos_write(int64_t fd, const void *buf, int64_t count, struct interrupt_frame *frame) {
     (void)frame;
     if (!buf || count <= 0) return -EINVAL;
 
@@ -673,7 +680,7 @@ int64_t sys_write(int64_t fd, const void *buf, int64_t count, struct interrupt_f
     return (int64_t)ret;
 }
 
-int64_t sys_execve(const char *path, const char **argv, const char **envp, struct interrupt_frame *frame) {
+int64_t aos_loadseg(const char *path, const char **argv, const char **envp, struct interrupt_frame *frame) {
     (void)frame;
     if (!path) return -1;
 
@@ -818,7 +825,7 @@ int64_t sys_execve(const char *path, const char **argv, const char **envp, struc
  * Memory management (stubs — implemented in backlog)
  * ---------------------------------------------------------------------- */
 
-int64_t sys_brk(void *addr, struct interrupt_frame *frame) {
+int64_t aos_setbrk(void *addr, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->mm) return -1;
 
@@ -859,7 +866,7 @@ int64_t sys_brk(void *addr, struct interrupt_frame *frame) {
     return (int64_t)current->mm->brk;
 }
 
-void *sys_mmap(void *addr, int64_t length, int64_t prot, int64_t flags, int64_t fd, int64_t offset, struct interrupt_frame *frame) {
+void *aos_allocmem(void *addr, int64_t length, int64_t prot, int64_t flags, int64_t fd, int64_t offset, struct interrupt_frame *frame) {
     (void)addr; (void)prot; (void)flags; (void)fd; (void)offset; (void)frame;
     if (!current || !current->mm || length <= 0) return (void *)-1;
 
@@ -878,7 +885,7 @@ void *sys_mmap(void *addr, int64_t length, int64_t prot, int64_t flags, int64_t 
     return (void *)virt;
 }
 
-int64_t sys_munmap(void *addr, int64_t length, struct interrupt_frame *frame) {
+int64_t aos_freemem(void *addr, int64_t length, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->mm) return -1;
     if (!addr || length <= 0) return -1;
@@ -906,7 +913,7 @@ int64_t sys_munmap(void *addr, int64_t length, struct interrupt_frame *frame) {
     return 0;
 }
 
-int64_t sys_ioctl(int64_t fd, uint64_t request, void *arg, struct interrupt_frame *frame) {
+int64_t aos_doio(int64_t fd, uint64_t request, void *arg, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -EBADF;
     if (fd < 0 || fd >= 256) return -EBADF;
@@ -929,7 +936,7 @@ int64_t sys_ioctl(int64_t fd, uint64_t request, void *arg, struct interrupt_fram
     return -ENOTTY;
 }
 
-int64_t sys_pipe(int64_t pipefd[2], struct interrupt_frame *frame) {
+int64_t aos_pipe(int64_t pipefd[2], struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files || !pipefd) return -1;
 
@@ -1052,7 +1059,7 @@ int64_t task_create_user(const char *path) {
  * lseek — reposition file offset
  * ---------------------------------------------------------------------- */
 
-int64_t sys_lseek(int64_t fd, int64_t offset, int64_t whence, struct interrupt_frame *frame) {
+int64_t aos_seek(int64_t fd, int64_t offset, int64_t whence, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -1;
     if (fd < 0 || fd >= 256) return -1;
@@ -1083,7 +1090,7 @@ int64_t sys_lseek(int64_t fd, int64_t offset, int64_t whence, struct interrupt_f
  * stat — get file status
  * ---------------------------------------------------------------------- */
 
-int64_t sys_stat(const char *pathname, struct stat *statbuf, struct interrupt_frame *frame) {    (void)frame;
+int64_t aos_examine(const char *pathname, struct stat *statbuf, struct interrupt_frame *frame) {    (void)frame;
     if (!pathname || !statbuf) return -1;
     
     vfs_node_t *node = vfs_resolve(pathname);
@@ -1118,7 +1125,7 @@ int64_t sys_stat(const char *pathname, struct stat *statbuf, struct interrupt_fr
  * fsync — flush cached file data to disk
  * ---------------------------------------------------------------------- */
 
-int64_t sys_fsync(int64_t fd, struct interrupt_frame *frame) {
+int64_t aos_flush(int64_t fd, struct interrupt_frame *frame) {
     (void)frame;
     if (!current || !current->files) return -1;
     if (fd < 0 || fd >= 256) return -1;
@@ -1165,7 +1172,7 @@ static vfs_node_t *resolve_parent_and_name(const char *pathname, char *name_out)
     return vfs_resolve(path_copy);
 }
 
-int64_t sys_mkdir(const char *pathname, int64_t mode, struct interrupt_frame *frame)
+int64_t aos_create_dir(const char *pathname, int64_t mode, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!pathname) return -EINVAL;
@@ -1179,7 +1186,7 @@ int64_t sys_mkdir(const char *pathname, int64_t mode, struct interrupt_frame *fr
     return vfs_mkdir(parent, name, (uint32_t)mode);
 }
 
-int64_t sys_rmdir(const char *pathname, struct interrupt_frame *frame)
+int64_t aos_delete_dir(const char *pathname, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!pathname) return -EINVAL;
@@ -1191,7 +1198,7 @@ int64_t sys_rmdir(const char *pathname, struct interrupt_frame *frame)
     return vfs_rmdir(parent, name);
 }
 
-int64_t sys_unlink(const char *pathname, struct interrupt_frame *frame)
+int64_t aos_delete_file(const char *pathname, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!pathname) return -EINVAL;
@@ -1203,7 +1210,7 @@ int64_t sys_unlink(const char *pathname, struct interrupt_frame *frame)
     return vfs_unlink(parent, name);
 }
 
-int64_t sys_chdir(const char *pathname, struct interrupt_frame *frame)
+int64_t aos_current_dir(const char *pathname, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!pathname || !current) return -EINVAL;
@@ -1216,7 +1223,7 @@ int64_t sys_chdir(const char *pathname, struct interrupt_frame *frame)
     return 0;
 }
 
-int64_t sys_fchdir(int64_t fd, struct interrupt_frame *frame)
+int64_t aos_current_dir_fd(int64_t fd, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!current || !current->files) return -EBADF;
@@ -1229,7 +1236,7 @@ int64_t sys_fchdir(int64_t fd, struct interrupt_frame *frame)
     return 0;
 }
 
-int64_t sys_getcwd(char *buf, int64_t size, struct interrupt_frame *frame)
+int64_t aos_lock_cwd(char *buf, int64_t size, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!current || !buf || size <= 0) return -EINVAL;
@@ -1240,7 +1247,7 @@ int64_t sys_getcwd(char *buf, int64_t size, struct interrupt_frame *frame)
     return 0;
 }
 
-int64_t sys_rename(const char *oldpath, const char *newpath, struct interrupt_frame *frame)
+int64_t aos_rename(const char *oldpath, const char *newpath, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!oldpath || !newpath) return -EINVAL;
@@ -1258,7 +1265,7 @@ int64_t sys_rename(const char *oldpath, const char *newpath, struct interrupt_fr
     return vfs_rename(old_parent, old_name, new_parent, new_name);
 }
 
-int64_t sys_getdents(int64_t fd, struct dirent *dirp, int64_t count, struct interrupt_frame *frame)
+int64_t aos_examine_dir(int64_t fd, struct dirent *dirp, int64_t count, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!current || !current->files) return -EBADF;
@@ -1293,7 +1300,7 @@ int64_t sys_getdents(int64_t fd, struct dirent *dirp, int64_t count, struct inte
 #include <net/net.h>
 #include <string.h>
 
-int64_t sys_socket(int domain, int type, int protocol, struct interrupt_frame *frame) {
+int64_t aos_socket(int domain, int type, int protocol, struct interrupt_frame *frame) {
     (void)frame;
     if (domain != AF_INET) return -1;
     if (type != SOCK_DGRAM && type != SOCK_STREAM) return -1;
@@ -1311,7 +1318,7 @@ int64_t sys_socket(int domain, int type, int protocol, struct interrupt_frame *f
     return fd;
 }
 
-int64_t sys_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct interrupt_frame *frame) {
+int64_t aos_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct interrupt_frame *frame) {
     (void)frame;
     if (sockfd < 0 || sockfd >= 256) return -1;
     if (!addr || addrlen < sizeof(struct sockaddr_in)) return -1;
@@ -1326,7 +1333,7 @@ int64_t sys_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct in
     return udp_bind(sock, (const uint8_t *)&sin->sin_addr, ntohs(sin->sin_port));
 }
 
-int64_t sys_sendto(int sockfd, const void *buf, int len, int flags, const struct sockaddr *dest_addr, int addrlen, struct interrupt_frame *frame) {
+int64_t aos_send(int sockfd, const void *buf, int len, int flags, const struct sockaddr *dest_addr, int addrlen, struct interrupt_frame *frame) {
     (void)frame;
     (void)flags;
     if (sockfd < 0 || sockfd >= 256) return -1;
@@ -1342,7 +1349,7 @@ int64_t sys_sendto(int sockfd, const void *buf, int len, int flags, const struct
     return udp_sendto(sock, buf, len, (const uint8_t *)&sin->sin_addr, ntohs(sin->sin_port));
 }
 
-int64_t sys_recvfrom(int sockfd, void *buf, int len, int flags, struct sockaddr *src_addr, int *addrlen, struct interrupt_frame *frame) {
+int64_t aos_recv(int sockfd, void *buf, int len, int flags, struct sockaddr *src_addr, int *addrlen, struct interrupt_frame *frame) {
     (void)frame;
     (void)flags;
     if (sockfd < 0 || sockfd >= 256) return -1;
@@ -1367,19 +1374,87 @@ int64_t sys_recvfrom(int sockfd, void *buf, int len, int flags, struct sockaddr 
     return ret;
 }
 
-int64_t sys_sock_close(int64_t fd, struct interrupt_frame *frame) {
+int64_t aos_close_socket(int64_t fd, struct interrupt_frame *frame) {
     (void)frame;
     if (fd < 0 || fd >= 256) return -1;
     if (!current || !current->files) return -1;
-    
+
     void *f = current->files->fd_array[fd];
     if (!f) return -1;
-    
+
     struct udp_sock *sock = (struct udp_sock *)f;
     if (sock->bound) {
         udp_close(sock);
     }
-    
+
     current->files->fd_array[fd] = NULL;
     return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Amiga assigns + message ports (f9b3068)
+ * ---------------------------------------------------------------------- */
+#include <assign.h>
+#include <msgport.h>
+
+int64_t aos_assign(const char *name, const char *path, int64_t op, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!name) return -1;
+    if (op == ASSIGN_SET)
+        return (int64_t)assign_set(name, path);
+    if (op == ASSIGN_UNSET)
+        return (int64_t)assign_unset(name);
+    if (op == ASSIGN_GET) {
+        if (!path) return -1;
+        char buf[ASSIGN_MAX_PATH];
+        if (assign_lookup(name, buf, sizeof buf) != 0)
+            return -1;
+        char *dst = (char *)path;
+        int i = 0;
+        while (buf[i] && i < ASSIGN_MAX_PATH - 1)
+            *dst++ = buf[i++];
+        *dst = '\0';
+        return 0;
+    }
+    return -1;
+}
+
+int64_t aos_create_port(const char *name, struct interrupt_frame *frame) {
+    (void)frame;
+    if (name) {
+        static char nbuf[16];
+        int i = 0;
+        while (name[i] && name[i] != ':' && i < 15) {
+            nbuf[i] = name[i];
+            i++;
+        }
+        nbuf[i] = '\0';
+        name = nbuf;
+    }
+    return msgport_create(name);
+}
+
+int64_t aos_delete_port(int64_t id, struct interrupt_frame *frame) {
+    (void)frame;
+    return msgport_delete((int32_t)id);
+}
+
+int64_t aos_put_msg(int64_t id, const msg_t *msg, struct interrupt_frame *frame) {
+    (void)frame;
+    return msgport_put((int32_t)id, msg);
+}
+
+int64_t aos_get_msg(int64_t id, msg_t *msg, int64_t *token, struct interrupt_frame *frame) {
+    (void)frame;
+    return msgport_get((int32_t)id, msg, token);
+}
+
+int64_t aos_wait_port(int64_t id, int64_t timeout_ms, struct interrupt_frame *frame) {
+    (void)frame;
+    return msgport_wait((int32_t)id, timeout_ms);
+}
+
+int64_t aos_reply_msg(int64_t token, const msg_t *msg, struct interrupt_frame *frame) {
+    (void)frame;
+    return msgport_reply(token, msg);
 }

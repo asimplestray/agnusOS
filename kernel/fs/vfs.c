@@ -8,6 +8,7 @@
 
 #include <vfs.h>
 #include <ramfs.h>
+#include <assign.h>
 #include <screen.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -102,8 +103,13 @@ vfs_node_t *vfs_resolve(const char *path)
     if (!vfs_root || !path)
         return NULL;
 
-    if (path[0] != '/')
-        return NULL;
+    if (path[0] != '/') {
+        /* Volume-style path ("Sys:bin/hello"): expand through assigns */
+        static char expanded[ASSIGN_MAX_PATH];
+        if (assign_expand(path, expanded, sizeof expanded) != 0)
+            return NULL;
+        return vfs_resolve(expanded);
+    }
 
     vfs_node_t *node = vfs_root;
 

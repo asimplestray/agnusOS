@@ -20,6 +20,8 @@
 #include <timer.h>
 #include <ata.h>
 #include <screen.h>
+#include <assign.h>
+#include <msgport.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -98,6 +100,16 @@ static int gen_uptime(struct proc_file *pf, char *buf, int max) {
     uint64_t tenths = ticks % 100;
     return mt_sprintf(buf, max, "%u.%02u\n",
                       (unsigned int)secs, (unsigned int)tenths);
+}
+
+static int gen_assigns(struct proc_file *pf, char *buf, int max) {
+    (void)pf;
+    return assign_dump(buf, max);
+}
+
+static int gen_ports(struct proc_file *pf, char *buf, int max) {
+    (void)pf;
+    return msgport_dump(buf, max);
 }
 
 static task_struct_t *task_by_pid(uint64_t pid) {
@@ -318,8 +330,12 @@ void procfs_init(void) {
 
     proc_file_t *meminfo = proc_make_file("meminfo", gen_meminfo);
     proc_file_t *uptime  = proc_make_file("uptime",  gen_uptime);
+    proc_file_t *assigns = proc_make_file("assigns", gen_assigns);
+    proc_file_t *ports   = proc_make_file("ports",   gen_ports);
     if (meminfo) ramfs_attach(proc, &meminfo->rn);
     if (uptime)  ramfs_attach(proc, &uptime->rn);
+    if (assigns) ramfs_attach(proc, &assigns->rn);
+    if (ports)   ramfs_attach(proc, &ports->rn);
 
     /* Make /proc dynamic: pid dirs are resolved on demand */
     proc->vfs.readdir = proc_root_readdir;

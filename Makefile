@@ -31,6 +31,7 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/rtc.o build/panic.o build/drm_device.o \
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o \
       build/drm_gem.o \
+      build/assign.o build/msgport.o \
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
       build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
@@ -372,6 +373,16 @@ build/dce_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dce_resource.c kernel/inc
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/dcn_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dcn_resource.c kernel/include/amdgpu_dc.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/assign.o: kernel/fs/assign.c kernel/include/assign.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/msgport.o: kernel/ipc/msgport.c kernel/include/msgport.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
