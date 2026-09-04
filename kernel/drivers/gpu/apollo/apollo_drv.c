@@ -197,6 +197,7 @@ static struct drm_driver_version apollo_driver_version = {
 static struct drm_pci_id apollo_pci_id_table[] = {
     // AMD Polaris 30 (RX 590 GME)
     {0x1002, 0x67df, PCI_ANY_ID, PCI_ANY_ID, APOLLO_CHIP_FAMILY_POLARIS | APOLLO_CHIP_GEN_POLARIS30},
+    {0x1002, 0x6fdf, PCI_ANY_ID, PCI_ANY_ID, APOLLO_CHIP_FAMILY_POLARIS | APOLLO_CHIP_GEN_POLARIS30},
     
     // Other Polaris variants (for testing)
     {0x1002, 0x67ef, PCI_ANY_ID, PCI_ANY_ID, APOLLO_CHIP_FAMILY_POLARIS | 0x31}, // RX 580
@@ -333,7 +334,7 @@ static int apollo_driver_load(struct drm_device *dev)
     priv->chip_family = (unsigned long)dev->dev_private & 0xFF00;
     priv->chip_generation = (unsigned long)dev->dev_private & 0x00FF;
     
-    if (vendor == 0x1002 && device == 0x67df) { // RX 590 GME (Polaris 30)
+    if (vendor == 0x1002 && (device == 0x67df || device == 0x6fdf)) { // RX 590 GME (Polaris 30)
         priv->chip_family = APOLLO_CHIP_FAMILY_POLARIS;
         priv->chip_generation = APOLLO_CHIP_GEN_POLARIS30;
         priv->chip_revision = 0x0;

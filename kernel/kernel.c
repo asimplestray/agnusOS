@@ -208,8 +208,11 @@ void kernel_main(void) {
     drm_atomic_test();
 
     /* Fase 3: amdgpu v0.1.0 MINIMAL (só ativa se houver ASIC suportada) */
-    screen_print("\n>> Fase 3: amdgpu v0.1.0 MINIMAL...\n");
+    screen_print("\n========================================================\n");
+    screen_print("   INICIALIZANDO SUBSISTEMA DE VIDEO AMD (AMDGPU)\n");
+    screen_print("========================================================\n");
     amdgpu_init();
+    screen_print("========================================================\n\n");
 
     screen_print("\n>> ApolloOS pronto. Iniciando processo usuario...\n");
 

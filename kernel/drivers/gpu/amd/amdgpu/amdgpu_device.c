@@ -37,6 +37,7 @@ static const struct amdgpu_asic_entry amdgpu_asic_table[] = {
     { 0x67EF, CHIP_POLARIS11, "Polaris11" },
     { 0x67FF, CHIP_POLARIS11, "Polaris11" },
     { 0x6987, CHIP_POLARIS12, "Polaris12" },
+    { 0x6FDF, CHIP_POLARIS10, "Polaris20 (RX 590 GME)" },
     { 0x73DF, CHIP_NAVI22,    "Navi22"    },
     { 0,      CHIP_UNKNOWN,   NULL        },
 };
@@ -192,6 +193,11 @@ static int amdgpu_detect_and_init(struct amdgpu_device *adev)
     adev->revision = pci_read_dword(adev->bus, adev->dev, adev->func,
                                     0x08) & 0xFF;
 
+    adev_log("PCI", COLOR_LIGHT_CYAN, "Dispositivo no PCI %02x:%02x.0 (Vendor 1002, Device %04x, Rev %02x)",
+             adev->bus, adev->dev, adev->dev_id, adev->revision);
+    adev_log("ASIC", COLOR_LIGHT_GREEN, "Modelo detectado: %s (GCN 4th Gen / GFX8)",
+             adev->asic_name);
+
     /* Habilita MEM_SPACE + BUS_MASTER no command register */
     uint32_t cmd = pci_read_dword(adev->bus, adev->dev, adev->func,
                                   PCI_CONFIG_COMMAND);
@@ -199,18 +205,24 @@ static int amdgpu_detect_and_init(struct amdgpu_device *adev)
                     cmd | 0x6);
 
     int rc = amdgpu_map_rmmio(adev);
-    if (rc)
+    if (rc) {
+        adev_log("FAIL", COLOR_LIGHT_RED, "Falha ao mapear BAR0 MMIO (%d)", rc);
         return rc;
+    }
+    adev_log("MMIO", COLOR_LIGHT_CYAN, "BAR0 MMIO: 0x%lx mapeado em 0x%lx (16 MB)",
+             adev->rmmio_phys, adev->rmmio_virt);
 
     rc = amdgpu_init_vram_aperture(adev);
-    if (rc)
+    if (rc) {
+        adev_log("FAIL", COLOR_LIGHT_RED, "Falha ao mapear BAR1 VRAM (%d)", rc);
         return rc;
-
-    adev_log("INFO", COLOR_LIGHT_CYAN, "%s detected (1002:%04x rev %02x)",
-             adev->asic_name, adev->dev_id, adev->revision);
+    }
+    adev_log("VRAM", COLOR_LIGHT_CYAN, "BAR1 VRAM: 0x%lx mapeado em 0x%lx (%u MB)",
+             adev->vram_phys, adev->vram_virt, (unsigned)(adev->vram_size >> 20));
 
     amdgpu_soft_reset(adev);
     amdgpu_enable_fb(adev);
+    adev_log("HW", COLOR_LIGHT_GREEN, "Soft-reset GRBM OK | BIF_FB_EN ativado (FrameBuffer pronto)");
 
     /* PM: power state forçado LOW até existir DPM real (Fase 5) */
     adev->dpm_forced_level = AMD_DPM_FORCED_LEVEL_LOW;
@@ -225,13 +237,17 @@ static int amdgpu_detect_and_init(struct amdgpu_device *adev)
     adev_serial_hex("SMC_RESP          :", amdgpu_rreg(adev, mmSMC_RESP));
 
     uint32_t mb = amdgpu_rreg(adev, mmCONFIG_MEMSIZE);
+    uint32_t grbm = amdgpu_rreg(adev, mmGRBM_STATUS);
     uint32_t resp = amdgpu_rreg(adev, mmSMC_RESP);
+    adev_log("REGS", COLOR_LIGHT_MAGENTA, "Dump: MEMSIZE=%u MB | GRBM=0x%08x | SMC_RESP=0x%x",
+             mb, grbm, resp);
+
     if (mb != 0 && mb <= 32768 && resp == AMDGPU_SMC_RESP_OK)
         adev_log("PASS", COLOR_LIGHT_GREEN,
-                 "register dump coerente com specs (MEMSIZE=%u MB)", mb);
+                 "Register dump coerente com silicio (MEMSIZE=%u MB)", mb);
     else
         adev_log("WARN", COLOR_BROWN,
-                 "dump fora do esperado (MEMSIZE=%u RESP=%u)", mb, resp);
+                 "Dump fora do esperado (MEMSIZE=%u RESP=%u)", mb, resp);
 
     return 0;
 }
@@ -249,6 +265,8 @@ int amdgpu_init(void)
     if (amdgpu_adev)
         return 0;
 
+    screen_log("SCAN", COLOR_LIGHT_BROWN, "amdgpu: Escaneando barramento PCI por GPUs AMD suportadas...");
+
     for (int b = 0; b < 256 && found_bus < 0; b++) {
         for (int d = 0; d < 32; d++) {
             uint16_t vendor = pci_read_word((uint8_t)b, (uint8_t)d, 0, 0);
@@ -264,10 +282,13 @@ int amdgpu_init(void)
     }
 
     if (found_bus < 0) {
+        screen_log("INFO", COLOR_LIGHT_RED, "amdgpu: Nenhuma GPU AMD suportada encontrada no barramento.");
         serial_print("[amdgpu] nenhuma ASIC suportada no barramento "
                      "(boot com vgpu amd-rx480 para validar)\n");
         return -ENODEV;
     }
+
+    screen_log("FOUND", COLOR_LIGHT_GREEN, "amdgpu: GPU AMD suportada encontrada! Inicializando hardware...");
 
     adev = amdgpu_create_adev((uint8_t)found_bus, (uint8_t)found_dev, 0);
     if (!adev)
