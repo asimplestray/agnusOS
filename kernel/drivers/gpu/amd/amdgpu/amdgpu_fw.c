@@ -67,7 +67,8 @@ static int amdgpu_fw_upload_block(struct amdgpu_device *adev,
     uint32_t ucode_size = hdr->ucode_size_bytes;
 
     if (ucode_offset + ucode_size > fw->size || (ucode_size % 4) != 0) {
-        adev_log("FAIL", COLOR_LIGHT_RED, "Tamanho de ucode corrompido em %s", fw_name);
+        adev_log("FAIL", COLOR_LIGHT_RED, "Tamanho corrompido em %s (off=%u, sz=%u, fw_sz=%u)",
+                 fw_name, ucode_offset, ucode_size, (unsigned)fw->size);
         release_firmware(fw);
         return -EINVAL;
     }

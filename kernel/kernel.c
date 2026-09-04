@@ -106,10 +106,15 @@ void kernel_main(void) {
                     struct multiboot_tag_module *mod = (struct multiboot_tag_module *)tag;
                     initrd_addr = (void *)(uintptr_t)mod->mod_start;
                     initrd_size = mod->mod_end - mod->mod_start;
+                    serial_print("ApolloOS: found MODULE tag\n");
                     break;
                 }
                 tag = (struct multiboot_tag *)(((uintptr_t)tag) + ((tag->size + 7) & ~7));
             }
+        }
+        
+        if (!initrd_addr) {
+            serial_print("ApolloOS: WARNING - no MODULE tag found in multiboot2 info!\n");
         }
         
         /* Initialize firmware cache from initrd */

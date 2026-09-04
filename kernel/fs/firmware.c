@@ -3,6 +3,7 @@
 #include <screen.h>
 #include <string.h>
 #include <vfs.h>
+#include <serial.h>
 #include <stdint.h>
 
 /* Simple strtoul for hex strings */
@@ -35,10 +36,10 @@ static void simple_strcpy(char *dst, const char *src) {
 }
 
 static int simple_strncmp(const char *a, const char *b, size_t n) {
-    while (n-- && *a && *b && *a == *b) {
-        a++; b++;
+    while (n && *a && *a == *b) {
+        a++; b++; n--;
     }
-    return n == 0 ? 0 : (*a - *b);
+    return n ? (*(const unsigned char *)a - *(const unsigned char *)b) : 0;
 }
 
 static void simple_memcpy(void *dst, const void *src, size_t n) {
@@ -111,23 +112,46 @@ static void parse_cpio_initrd(void *initrd_addr, size_t initrd_size) {
     uint8_t *ptr = (uint8_t *)initrd_addr;
     uint8_t *end = ptr + initrd_size;
     
+    serial_print("FW: parse_cpio_initrd addr=0x");
+    char hbuf[17];
+    uint64_t val = (uintptr_t)initrd_addr;
+    const char hex[] = "0123456789abcdef";
+    for (int i = 15; i >= 0; i--) {
+        hbuf[i] = hex[val & 0xf];
+        val >>= 4;
+    }
+    hbuf[16] = '\0';
+    serial_print(hbuf);
+    serial_print(" size=");
+    char sbuf[16];
+    itoa(initrd_size, sbuf, 10);
+    serial_print(sbuf);
+    serial_print("\n");
+
     while (ptr < end) {
         /* Check for CPIO newc format magic "070701" */
-        if (ptr + 110 > end) break;
-        if (simple_memcmp(ptr, "070701", 6) != 0) {
-            /* Try old ASCII format "070707" */
-            if (simple_memcmp(ptr, "070707", 6) != 0) break;
+        if (ptr + 110 > end) {
+            serial_print("FW: ptr + 110 > end, breaking\n");
+            break;
+        }
+        if (memcmp(ptr, "070701", 6) != 0 && memcmp(ptr, "070702", 6) != 0) {
+            serial_print("FW: not newc magic: ");
+            char mbuf[7] = {0};
+            memcpy(mbuf, ptr, 6);
+            serial_print(mbuf);
+            serial_print("\n");
+            break;
         }
         
         /* Parse newc header (110 bytes) */
         char namesize_str[9] = {0};
         char filesize_str[9] = {0};
         
+        simple_memcpy(filesize_str, ptr + 54, 8);
         simple_memcpy(namesize_str, ptr + 94, 8);
-        simple_memcpy(filesize_str, ptr + 102, 8);
         
-        uint32_t namesize = simple_strtoul(namesize_str, 16);
         uint32_t filesize = simple_strtoul(filesize_str, 16);
+        uint32_t namesize = simple_strtoul(namesize_str, 16);
         
         ptr += 110;
         
@@ -154,7 +178,13 @@ static void parse_cpio_initrd(void *initrd_addr, size_t initrd_size) {
             
             simple_strcpy(entry->name, fw_name);
             entry->name[sizeof(entry->name) - 1] = '\0';
-            entry->data = ptr;
+            void *fw_copy = kmalloc(filesize);
+            if (fw_copy) {
+                memcpy(fw_copy, ptr, filesize);
+                entry->data = (const uint8_t *)fw_copy;
+            } else {
+                entry->data = ptr;
+            }
             entry->size = filesize;
             entry->next = firmware_cache;
             firmware_cache = entry;
@@ -179,15 +209,20 @@ static void parse_cpio_initrd(void *initrd_addr, size_t initrd_size) {
 
 void firmware_cache_init(void *initrd_addr, size_t initrd_size) {
     if (!initrd_addr || initrd_size == 0) {
+        serial_print("FW: No initrd provided for firmware (addr is NULL or size is 0)\n");
         screen_log("WARN", COLOR_LIGHT_BROWN, "No initrd provided for firmware");
         return;
     }
     
+    serial_print("FW: firmware_cache_init parsing initrd...\n");
     firmware_cache = NULL;
     parse_cpio_initrd(initrd_addr, initrd_size);
     
     if (firmware_cache) {
+        serial_print("FW: Firmware cache initialized successfully!\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Firmware cache initialized");
+    } else {
+        serial_print("FW: Firmware cache is empty after parse!\n");
     }
 }
 

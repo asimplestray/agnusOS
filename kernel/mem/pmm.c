@@ -127,6 +127,16 @@ void pmm_init(uint64_t mbi_addr) {
     // - Reserve the Multiboot2 Information structure passed by GRUB
     pmm_reserve_region(mbi_addr, mbi_size);
 
+    // - Reserve any Multiboot2 Modules (initrd, firmware, etc.)
+    tag = (struct multiboot_tag*)(mbi_addr + 8);
+    while (tag->type != MULTIBOOT_TAG_TYPE_END) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
+            struct multiboot_tag_module* mod = (struct multiboot_tag_module*)tag;
+            pmm_reserve_region(mod->mod_start, mod->mod_end - mod->mod_start);
+        }
+        tag = (struct multiboot_tag*)((uintptr_t)tag + ((tag->size + 7) & ~7));
+    }
+
     // Logs the physical RAM statistics
     screen_log(" OK ", COLOR_LIGHT_GREEN, "Physical Memory Manager (PMM) bitmap initialized.");
 }

@@ -315,6 +315,9 @@ int amdgpu_init(void)
         goto err_free;
     }
 
+    /* Carrega os microcódigos da AMD (PFP, CE, ME) no Command Processor */
+    amdgpu_fw_load(adev);
+
     /* Em hardware físico real (RX 590 GME), a sonda de hardware está concluída com sucesso.
      * Não tentamos os modos simulados da vgpu nem anéis sem microcódigo. */
     if (adev->dev_id == 0x6FDF) {
@@ -323,10 +326,6 @@ int amdgpu_init(void)
         adev_log("PASS", COLOR_LIGHT_GREEN, "Hardware Real Polaris20 (RX 590 GME) sondado com SUCESSO!");
         adev_log("INFO", COLOR_LIGHT_CYAN, "Display mantido ativo no modo seguro UEFI GOP.");
         adev_log("INFO", COLOR_LIGHT_CYAN, "PCIe MMIO BAR0 e VRAM BAR1 operacionais!");
-
-        /* Carrega os microcódigos da AMD (PFP, CE, ME) no Command Processor */
-        amdgpu_fw_load(adev);
-
         return 0;
     }
 
