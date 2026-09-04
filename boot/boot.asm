@@ -8,11 +8,11 @@ header_start:
 
     ; --- Framebuffer Request Tag ---
     dw 5                         ; tag type: framebuffer
-    dw 0                         ; flags (0 = required)
+    dw 1                         ; flags (1 = optional, avoids error if mode unavailable)
     dd 20                        ; size of this tag (bytes)
-    dd 1280                      ; preferred width
-    dd 800                       ; preferred height
-    dd 32                        ; preferred bits per pixel (32bpp ARGB)
+    dd 0                         ; preferred width (0 = accept native GOP resolution)
+    dd 0                         ; preferred height (0 = accept native GOP resolution)
+    dd 0                         ; preferred bits per pixel (0 = accept native depth)
     dd 0                         ; padding
 
     ; End tag (type 0, size 8)
