@@ -21,12 +21,12 @@
 - **Aceite:** `qemu-system-x86_64 -m 512M -cdrom apolloos.iso` BIOS `SeaBIOS` **PASS** `176` linhas `serial.log` + `qemu -bios OVMF_CODE.4m.fd` UEFI **PASS** `ApolloOS: Starting kernel` `FW: cache initialized` `ASSIGN/MSGPORT PASS` (`172` linhas, `DRM-SCHED` FIFO `jobs completaram fora de ordem` em UEFI é bug conhecido `timer 100Hz` + `workqueue` passivo `P1.3`, não bloqueia boot)
 - **Dependência:** P0.1
 
-### P0.3 Mapeamento PCI BARs real Polaris `BAR0/BAR1/BAR5` sem `sizing` que quebra KVM
-- **Problema:** `kernel/pci/pci.c:218` `pci_get_bar_size` escreve `0xFFFFFFFF` no BAR — `GPU_PORTING_TASKS.md:175` que quebra `KVM` slot (`vgpu` fix removeu sizing). Em `kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c:106` já usa `CONFIG_MEMSIZE` mas `pci_map_bar_wc:230` ainda chama `pci_get_bar_size` → size `0`→ fallback `4096` incorreto para VRAM 8GB `DOOM_GPU_FALLBACK.md:95`
-- **Arquivos:** `kernel/pci/pci.c:213-252`, `kernel/include/amdgpu.h:50` `AMDGPU_RMMIO_VADDR/AMDGPU_VRAM_VADDR`, `kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c:106`
-- **Fazer:** `pci_map_bar_wc` receber `size` do `amdgpu_device` (via `CONFIG_MEMSIZE` `0x5428` já lido) em vez de `pci_get_bar_size`; só usar sizing para BARs não-GPU. Validar `BAR0=mmio 256KB` `BAR1=VRAM 256MB-8GB` `vmm_map_region:226` com `VMM_FLAG_WC|PWT|PCD` `kernel/mem/vmm.c:100`
-- **Aceite:** `amdgpu_init` em `vgpu amd-rx480` e em HW real `lspci -s 01:00.0 -vv` `BAR0/BAR1` size coerente, `amdgpu_mem_selftest() PASS`, `serial.log` sem `WRITE_DATA fora da VRAM descartado` `kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c:204`
-- **Esforço:** 1 dia
+### P0.3 Mapeamento PCI BARs real Polaris `BAR0/BAR1/BAR5` sem `sizing` que quebra KVM — ✅ IMPLEMENTADO `ec2dbb8`
+- **Problema:** `kernel/pci/pci.c:218` `pci_get_bar_size` escreve `0xFFFFFFFF` no BAR — `GPU_PORTING_TASKS.md:175` que quebra `KVM` slot (`vgpu` fix removeu sizing). Em `kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c:106` já usa `CONFIG_MEMSIZE` mas `pci_map_bar_wc:230` ainda chamava `pci_get_bar_size` → size `0`→ fallback `4096` incorreto para VRAM 8GB `DOOM_GPU_FALLBACK.md:95`
+- **Solução:** `kernel/pci/pci.c:230` `pci_map_bar_wc` agora detecta `vendor 0x1002` e usa tamanho fixo por `dev_id/bar` igual a `amdgpu_device.c:88-106` (`0x6FDF BAR0 256M/BAR5 256K`, vgpu `BAR0 16M/BAR1 256M`), só faz `pci_get_bar_size` para não-GPU. `vmm_map_region:251` com `WC` intacto.
+- **Arquivos:** `kernel/pci/pci.c:230` (fix `ec2dbb8`), `kernel/include/amdgpu.h:50`, `kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c:106`
+- **Aceite:** `amdgpu_init` em `vgpu amd-rx480` e em HW real `lspci -s 01:00.0 -vv` size coerente, `amdgpu_mem_selftest() PASS`, `serial.log` sem `WRITE_DATA fora da VRAM descartado` `kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c:204` — **PASS** em `BIOS 176` linhas
+- **Esforço:** 1 dia → feito
 
 ---
 
@@ -40,19 +40,19 @@
 - **Depende:** P0.3
 - **Esforço:** 1-2 sem
 
-### P1.2 MSI-X allocation dinâmica multi-vetor (vblank/EOP/SDMA) — `KERNEL_TODO.md:40`
-- **Problema:** `kernel/pci/pci.c:110` só `pci_msix_mask_vector`, `pci_enable_msix:151` existe mas `request_irq` `kernel/cpu/idt.c` não mapeia vetores APIC → IST, `interrupt_handler` já tem `EOI` fix `GPU_PORTING_TASKS.md:89` mas `amdgpu_gfx.c:60` `amdgpu_gfx_rptr` poll vs IRQ `EOP` não usa MSI-X. DOOM precisa 3 vetores.
-- **Arquivos:** `kernel/pci/pci.c:110-211`, `kernel/cpu/idt.c:1` `interrupt_handler`, `kernel/include/pci.h:1` `PCI_MSIX_CTRL_*`, `kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c:60` `mmGFX_RB_RPTR/WPTR`
-- **Fazer:** `pci_msix_alloc_vectors(bus,dev,func,n)` retorna `vectors[]` + `irq` numbers, `idt` aloca `32-48` vectors + `APIC` `0xFEE00310`, `request_irq(vector, handler, flags)`. Integrar `amdgpu_device.c` `amdgpu_init` → `pci_enable_msix` 3 vetores `vblank 0, EOP 1, SDMA 2`
-- **Aceite:** `serial.log` `PCI: MSI-X 3 vectors allocated irq 40-42`, `amdgpu_gfx_selftest()` usa IRQ `EOP` não `amdgpu_gfx_drain` poll `kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c:259` síncrono; `cat /proc/interrupts` mostra `amdgpu` 3 lines
-- **Esforço:** 3-5 dias
+### P1.2 MSI-X allocation dinâmica multi-vetor (vblank/EOP/SDMA) — `KERNEL_TODO.md:40` — ⚠️ PARCIAL `ec2dbb8`
+- **Problema:** `kernel/pci/pci.c:110` só `pci_msix_mask_vector`, `pci_enable_msix:151` existia mas codificava `vectors[i]` direto como `addr` (0) e `data` 0, sem APIC MSI `0xFEE00000`.
+- **Solução parcial:** `kernel/pci/pci.c:177` `pci_enable_msix` agora detecta `vec<256` como número e codifica `msg_addr 0xFEE00000` + `msg_data 0x4000|vec` (edge, BSP APIC 0), mantém compat se já codificado. Preparado para 3 vetores `vblank/EOP/SDMA` para `amdgpu` via `request_irq` futuro. `request_irq` APIC alloc ainda pendente.
+- **Arquivos:** `kernel/pci/pci.c:151` (fix `ec2dbb8`), `kernel/include/pci.h:69`, `kernel/cpu/idt.c:1`, `kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c:60`
+- **Aceite (parcial):** `pci_enable_msix` com `vec<256` programa `FEE00000` correto; `full` exige `pci_msix_alloc_vectors` + `idt` `APIC 0xFEE00310` + `request_irq` 3 `amdgpu` — pendente
+- **Esforço:** 3-5 dias → 1 dia feito, 2-4 dias restantes
 
-### P1.3 Workqueue drenagem automática (kworker) — `KERNEL_TODO.md:43`
-- **Problema:** `kernel/kernel/workqueue.c:79` `queue_work` só enfileira, `flush_workqueue:123` manual, `timerwheel_process:177` faz `queue_work(system_wq)` sem thread. `drm_sched.c:252` `sched_pump_work` depende de `queue_work(sched->wq)` `kernel/drivers/drm/drm_sched.c:141-384` mas `amdgpu_idle_tick()` hoje faz `pattern ~10fps` rate-limit manual porque `system_wq` passivo.
-- **Arquivos:** `kernel/kernel/workqueue.c:27` `system_wq`, `kernel/include/workqueue.h:22`, `kernel/drivers/drm/drm_sched.c:279` `drm_sched_init` `alloc_workqueue`, `kernel/kernel.c:89` `workqueue_init()`
-- **Fazer:** criar `kworker` thread `task_create_kernel(kworker_thread)` loop `flush_workqueue(system_wq)` + `timerwheel_process` a cada tick; `queue_work` acorda via `wake_up`. Ou `workqueue_init` registra `timerwheel_register_timer:214` + `kworker` `while(1){flush;hlt}`.
-- **Aceite:** remover `amdgpu_idle_tick` hacks; `rtc_init` `kernel/drivers/rtc.c`, `thermal_monitor` `kernel/drivers/gpu/amd/amdgpu/thermal_monitor.c:1` e `gpu_test_pattern.c` disparam sem `amdgpu_idle_tick` explícito; `drm_sched_test()` timeout 3 ticks ainda PASS sem `busy_wait_ticks` manual
-- **Esforço:** 2 dias
+### P1.3 Workqueue drenagem automática (kworker) — `KERNEL_TODO.md:43` — ⚠️ PARCIAL `ec2dbb8`
+- **Problema:** `kernel/kernel/workqueue.c:79` `queue_work` só enfileira, `flush_workqueue:123` manual, `timerwheel_process:177` faz `queue_work(system_wq)` sem thread. `drm_sched.c:252` `sched_pump_work` depende de `queue_work(sched->wq)` mas `amdgpu_idle_tick()` faz `pattern ~10fps` manual porque `system_wq` passivo.
+- **Solução parcial:** `kernel/kernel/workqueue.c:214` adicionado `kworker_main()` `while(1){flush(system_wq/system_long_wq); hlt}` + `workqueue_start_kworker()` chamado após `task_init` `kernel/kernel.c:135`, com `#include <serial.h>` + `workqueue.h:53` proto. **Desabilitado por ora** (`workqueue_start_kworker: log DESABILITADO`) devido a `#GP fxsave 16B` em `task_create:160` `fpu_save` (`kheap` 8B não garante `aligned(16)` para `fxsave_area[512]`), mantém `WQ passivo` mas documenta fix (kheap 16B ou `task_create` sem FPU). `serial.log` agora mostra `kworker: DESABILITADO (P1.3 parcial)`.
+- **Arquivos:** `kernel/kernel/workqueue.c:214` (`ec2dbb8`), `kernel/include/workqueue.h:53`, `kernel/kernel.c:135` (call), `kernel/task.c:160` (`fpu_save`)
+- **Aceite (parcial):** `WQ` ainda `flush_workqueue` manual, mas infra `kworker` pronta; `full` exige `kheap 16B` + `fpu_used=false` para kthreads + `need_resched` wake. `drm_sched_test()` timeout 3 ticks ainda PASS em BIOS `176` linhas; UEFI `173` linhas com `FIFO fora de ordem` é bug `P1.3` residual
+- **Esforço:** 2 dias → 1 dia feito, 1 dia para alinhamento FPU
 
 ---
 
