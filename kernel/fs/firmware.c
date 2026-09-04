@@ -143,7 +143,7 @@ static void parse_cpio_initrd(void *initrd_addr, size_t initrd_size) {
         if (ptr + filesize > end) break;
         
         /* Check if it's a firmware file (under /lib/firmware/) */
-        if (simple_strncmp(name, "lib/firmware/", 13) == 0 || simple_strncmp(name, "/lib/firmware/", 14) == 0) {
+        if (filesize > 0 && (simple_strncmp(name, "lib/firmware/", 13) == 0 || simple_strncmp(name, "/lib/firmware/", 14) == 0)) {
             const char *fw_name = name + (name[0] == '/' ? 14 : 13);
             
             struct firmware_cache_entry *entry = (struct firmware_cache_entry *)kmalloc(sizeof(struct firmware_cache_entry));

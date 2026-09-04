@@ -66,6 +66,25 @@ struct amdgpu_asic_entry {
 #define mmGFX_RB_RPTR               0x00000800
 #define mmGFX_RB_WPTR               0x00000804
 
+/* CP Firmware registers (GFX8 / Polaris) — offsets em bytes (DWORD * 4) */
+#define mmCP_PFP_UCODE_ADDR         0x0003E050   /* 0xf814 * 4 */
+#define mmCP_PFP_UCODE_DATA         0x0003E054   /* 0xf815 * 4 */
+#define mmCP_ME_RAM_WADDR           0x0003E058   /* 0xf816 * 4 */
+#define mmCP_ME_RAM_DATA            0x0003E05C   /* 0xf817 * 4 */
+#define mmCP_CE_UCODE_ADDR          0x0003E060   /* 0xf818 * 4 */
+#define mmCP_CE_UCODE_DATA          0x0003E064   /* 0xf819 * 4 */
+#define mmCP_ME_CNTL                0x000086D8   /* 0x21b6 * 4 */
+
+/* Bits de CP_ME_CNTL */
+#define CP_ME_CNTL_CE_HALT          0x01000000u
+#define CP_ME_CNTL_PFP_HALT         0x04000000u
+#define CP_ME_CNTL_ME_HALT          0x10000000u
+#define CP_ME_CNTL_ALL_HALT         (CP_ME_CNTL_CE_HALT | CP_ME_CNTL_PFP_HALT | CP_ME_CNTL_ME_HALT)
+
+/* Bits de GRBM_STATUS */
+#define GRBM_STATUS_CP_BUSY         0x20000000u
+#define GRBM_STATUS_GUI_ACTIVE      0x80000000u
+
 /* DCE subset da emulação (timing + GRPH pipe 0) */
 #define mmCRTC0_H_TOTAL             0x0006500
 #define mmCRTC0_H_BLANK_START_END   0x0006504
@@ -163,6 +182,12 @@ struct amdgpu_device {
     volatile bool pattern_enabled;
     uint64_t    pattern_last_tick;
     uint32_t    frame_count;
+
+    /* Firmware / CP microcode status */
+    bool        fw_loaded;
+    uint32_t    fw_pfp_ver;
+    uint32_t    fw_me_ver;
+    uint32_t    fw_ce_ver;
 };
 
 /* RREG32/WREG32 via rmmio (BAR0 é MMIO direto na emulação) */
@@ -183,6 +208,7 @@ void adev_log(const char *tag, vga_color_t color, const char *fmt, ...);
 /* ---- Dev 1 — device init ---- */
 int  amdgpu_init(void);                 /* probe PCI + cadeia completa */
 void amdgpu_fini(void);
+int  amdgpu_fw_load(struct amdgpu_device *adev);  /* CP firmware load */
 extern struct amdgpu_device *amdgpu_adev;   /* singleton (v0.1.0: 1 GPU) */
 
 /* ---- Dev 2 — memória ---- */

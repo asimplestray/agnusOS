@@ -35,24 +35,32 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
       build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
       build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
-      build/amdgpu_gfx.o build/thermal_monitor.o build/gpu_test_pattern.o \
+      build/amdgpu_gfx.o build/amdgpu_fw.o build/thermal_monitor.o build/gpu_test_pattern.o \
       build/dc_core.o build/dce_resource.o build/dcn_resource.o
 
 # Output
 ISO_OUT = apolloos.iso
 BIN_OUT = build/iso/boot/apolloos.bin
+FW_CPIO = build/fw.cpio
 
 .PHONY: all clean run
 
 all: $(ISO_OUT)
 
-$(ISO_OUT): $(OBJ) linker.ld grub.cfg
+$(FW_CPIO): scripts/make_fw_initrd.sh
+	@mkdir -p build
+	@echo ">> Packaging firmware CPIO..."
+	@bash scripts/make_fw_initrd.sh
+
+$(ISO_OUT): $(OBJ) linker.ld grub.cfg $(FW_CPIO)
 	@echo ">> Creating build directories..."
 	@mkdir -p build/iso/boot/grub
 	@echo ">> Linking kernel..."
 	@$(LD) $(LDFLAGS) -o $(BIN_OUT) $(OBJ)
 	@echo ">> Verifying Multiboot2 header..."
 	@grub-file --is-x86-multiboot2 $(BIN_OUT)
+	@echo ">> Copying firmware archive..."
+	@cp $(FW_CPIO) build/iso/boot/fw.cpio
 	@echo ">> Generating ISO..."
 	@cp grub.cfg build/iso/boot/grub/grub.cfg
 	@grub-mkrescue -o $(ISO_OUT) build/iso
@@ -334,6 +342,11 @@ build/amdgpu_mode.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_mode.c kernel/include/
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/amdgpu_gfx.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c kernel/include/amdgpu.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/amdgpu_fw.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_fw.c kernel/include/amdgpu.h kernel/include/firmware.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
