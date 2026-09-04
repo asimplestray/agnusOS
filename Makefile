@@ -53,8 +53,30 @@ $(FW_CPIO): scripts/make_fw_initrd.sh
 	@echo ">> Packaging firmware CPIO..."
 	@bash scripts/make_fw_initrd.sh
 
-$(ISO_OUT): $(OBJ) linker.ld grub.cfg $(FW_CPIO)
+$(ISO_OUT): $(OBJ) linker.ld grub.cfg limine.cfg $(FW_CPIO) limine/BOOTX64.EFI limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin
 	@echo ">> Creating build directories..."
+	@mkdir -p build/iso/boot
+	@mkdir -p build/iso/EFI/BOOT
+	@echo ">> Linking kernel..."
+	@$(LD) $(LDFLAGS) -o $(BIN_OUT) $(OBJ)
+	@echo ">> Verifying Multiboot2 header..."
+	@grub-file --is-x86-multiboot2 $(BIN_OUT)
+	@echo ">> Copying firmware archive..."
+	@cp $(FW_CPIO) build/iso/boot/fw.cpio
+	@echo ">> Generating Limine hybrid ISO (BIOS+UEFI)..."
+	@cp limine.cfg build/iso/boot/limine.cfg
+	@cp limine.cfg build/iso/limine.cfg
+	@cp limine/limine-bios.sys build/iso/boot/limine-bios.sys
+	@cp limine/limine-bios.sys build/iso/limine-bios.sys
+	@cp limine/BOOTX64.EFI build/iso/EFI/BOOT/BOOTX64.EFI
+	@cp limine/limine-bios-cd.bin build/iso/boot/limine-bios-cd.bin
+	@cp limine/limine-uefi-cd.bin build/iso/boot/limine-uefi-cd.bin
+	@xorriso -as mkisofs -b boot/limine-bios-cd.bin -no-emul-boot -boot-load-size 4 -boot-info-table --efi-boot boot/limine-uefi-cd.bin -efi-boot-part --efi-boot-image --protective-msdos-label build/iso -o $(ISO_OUT) 2>/dev/null
+	@./limine/limine bios-install $(ISO_OUT) 2>/dev/null
+	@echo ">> Success! Generated $(ISO_OUT) (Limine BIOS+UEFI, GRUB fallback: make grub-iso)"
+
+grub-iso: $(OBJ) linker.ld grub.cfg $(FW_CPIO)
+	@echo ">> [GRUB fallback] Creating build directories..."
 	@mkdir -p build/iso/boot/grub
 	@echo ">> Linking kernel..."
 	@$(LD) $(LDFLAGS) -o $(BIN_OUT) $(OBJ)
@@ -62,10 +84,10 @@ $(ISO_OUT): $(OBJ) linker.ld grub.cfg $(FW_CPIO)
 	@grub-file --is-x86-multiboot2 $(BIN_OUT)
 	@echo ">> Copying firmware archive..."
 	@cp $(FW_CPIO) build/iso/boot/fw.cpio
-	@echo ">> Generating ISO..."
+	@echo ">> Generating GRUB ISO..."
 	@cp grub.cfg build/iso/boot/grub/grub.cfg
 	@grub-mkrescue -o $(ISO_OUT) build/iso
-	@echo ">> Success! Generated $(ISO_OUT)"
+	@echo ">> Success! Generated $(ISO_OUT) (GRUB)"
 
 build/boot.o: boot/boot.asm
 	@mkdir -p build

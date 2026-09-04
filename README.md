@@ -14,7 +14,7 @@ AmigaOS-inspired hobby OS kernel (x86_64, C + asm). Filosofia Exec/Intuition (le
 
 ## Features (estado v0.2-Alpha `KERNEL_TODO.md:3` + Amiga extentions `c32c427`)
 
-- **Kernel**: x86_64 `multiboot2` `boot/boot.asm:1` → Long Mode `linker.ld:4` `PHDRS R E/RW` (híbrido BIOS+EFI via `grub-mkrescue` `Makefile:66`)
+- **Kernel**: x86_64 `multiboot2` `boot/boot.asm:1` → Long Mode `linker.ld:4` `PHDRS R E/RW` (híbrido BIOS+UEFI via **Limine 7.12.0** `limine.cfg:1` `Makefile:56` `xorriso + limine bios-install`, fallback `grub-mkrescue` `make grub-iso`)
 - **Memory**: `PMM` bitmap `kernel/mem/pmm.c:58` (fix `PRE_AMDGPU_TASKS.md:P0` protege `initrd`), `VMM` 4-level `kernel/mem/vmm.c:15`, `kheap`, `#PF` `kernel/mem/vmm.c:330` `demand+COW` `VMM_FLAG_COW` + `stack growth`
 - **Exec/Tasks**: preemptivo `schedule()` `kernel/task.c:255` `fxsave_area[512]` `CR0.TS`, `fork(COW)` `kernel/task.c:108` `vmm_clone_user_pml4`, `wait_chldexit` `ZOMBIE` + `wait_queue` `kernel/include/wait.h:17` (Exec `Signal` → `POSIX sigaction` `kernel/task.c:523` ainda) + **Amiga**: `MsgPort` `kernel/ipc/msgport.c:1` `AOS_CreatePort/PutMsg/GetMsg/WaitPort/ReplyMsg` `AOS_Assign` `kernel/fs/assign.c:1` `Sys: Ram: Work: C: Devs:` (`/proc/assigns`+`/proc/ports`)
 - **Syscalls**: 53 `AOS_*` `kernel/include/syscall.h:109` (`AOS_Exit/SpawnTask/AllocMem/FindTask/Yield/Delay` + `AOS_Assign/CreatePort`) `NR 53` compat `SYS_*` alias, dispatch `kernel/syscall.c:34`
@@ -34,13 +34,16 @@ AmigaOS-inspired hobby OS kernel (x86_64, C + asm). Filosofia Exec/Intuition (le
 Requirements:
 - `nasm` (assembler)
 - `gcc`/`ld` (x86_64 host toolchain, freestanding)
-- `grub-mkrescue` and `grub-file` (for ISO creation / multiboot2 verification)
-- `qemu-system-x86_64` (for testing)
+- `grub-mkrescue`/`grub-file` (fallback BIOS) + `xorriso`/`mformat`/`mcopy` (Limine hybrid)
+- `qemu-system-x86_64` + `OVMF` (`/usr/share/OVMF/x64/OVMF_CODE.4m.fd` para teste UEFI)
+- `limine` 7.12.0 já vendored em `limine/` (`BOOTX64.EFI`/`limine-bios.sys`/`limine` binário)
 
 ```bash
-make        # builds apolloos.iso
-make run    # boot in QEMU (SDL window)
-make run-vnc # boot in QEMU, VNC on localhost:5900
+make              # Limine BIOS+UEFI (3.1M) — testado BIOS SeaBIOS e UEFI OVMF ambos PASS
+make grub-iso      # fallback GRUB híbrido (32M, BIOS OK, UEFI PF GRUB)
+make run          # SDL (BIOS)
+# UEFI teste manual:
+qemu-system-x86_64 -m 512M -cdrom apolloos.iso -drive if=pflash,format=raw,unit=0,file=/usr/share/OVMF/x64/OVMF_CODE.4m.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=/tmp/OVMF_VARS.fd -display sdl -vga std -serial stdio
 make clean
 ```
 
@@ -86,11 +89,13 @@ apolloOS/
 │   └── task.c:255   # scheduler prio decay + fxsave + aos_signal AOS_*
 ├── scripts/         # make_fw_initrd.sh (8 blobs polaris10 389632B)
 ├── vgpu/            # fork QEMU + vgpu_dce.c scanout + run-test.sh
-├── PRE_AMDGPU_TASKS.md # P0-P3 antes do amdgpu 6.6 (EFI PF, IOMMU, MSI-X, kworker, SDMA/DOOM)
+├── limine/          # vendored 7.12.0 BOOTX64.EFI/limine-bios.sys/*.bin + limine binário
+├── limine.cfg:1     # Limine PROTOCOL=multiboot2 KERNEL boot:///boot/apolloos.bin MODULE boot:///boot/fw.cpio
+├── PRE_AMDGPU_TASKS.md # P0-P3 (P0.2 FIXED via Limine) antes do amdgpu 6.6
 ├── GPU_PORTING_STRATEGY.md / GPU_PORTING_TASKS.md / KERNEL_TODO.md
-├── grub.cfg:1       # multiboot2 /boot/apolloos.bin + module2 /boot/fw.cpio + all_video/gfxterm
+├── grub.cfg:1       # fallback GRUB multiboot2 (make grub-iso)
 ├── linker.ld:4      # 1M + PHDRS text R E / data RW
-└── Makefile:66      # grub-mkrescue híbrido + grub-file multiboot2
+└── Makefile:56      # Limine xorriso + bios-install (default) + grub-iso fallback
 ```
 
 ## Related Projects

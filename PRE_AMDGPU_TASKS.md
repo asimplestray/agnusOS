@@ -14,11 +14,11 @@
 - **Aceite:** `readelf -l` mostra `LOAD R E` + `LOAD RW` (não `RWE`), `xorriso` log `Copying to System Area: boot_hybrid.img`, boot BIOS `serial.log` `ApolloOS: Starting kernel...` e boot EFI `OVMF_CODE.4m.fd` sem `X64 Exception` antes do kernel
 - **Estado atual:** parcial (BIOS OK em `18:40`, EFI ainda `X64 Exception Type - 0E` `RIP 1B76xxxx CR2 1B76xxxx Error 0003` mesmo após PHDR fix — testado `minimal/efi_gop/no-fb` todos PF)
 
-### P0.2 GRUB EFI multiboot2 PF em OVMF
-- **Problema:** com `OVMF_CODE.4m.fd` `BdsDxe: Booting 'ApolloOS'` → `!!!! X64 Exception #PF ... ImageBase 0xF3D008` antes de `kernel_main`. `boot/boot.asm:9` tag framebuffer `type 5 flags 1 size 20 0,0,0` já opcional mas `grub_video_set_mode:782 no suitable video mode` ainda PF em EFI. Afeta `DOOM_GPU_FALLBACK.md:88` fallback `UEFI GOP Linear FB`.
-- **Arquivos:** `boot/boot.asm:9-21`, `grub.cfg:1-11`, `kernel/kernel.c:40` `fb_init(multiboot_info)` , `kernel/drivers/framebuffer.c:1`
-- **Fazer:** decidir 1: `efi_stub` nativo (kernel como `PE32+` EFI app via `OVMF.4m.fd` sem GRUB) ou 2: fix GRUB EFI `multiboot2` (remover `all_video/gfxterm`, `set gfxpayload=text`, testar `efi_gop/efi_uga`, ou atualizar `grub 2.12` `multiboot2.mod`). Capturar `qemu -d int,guest_errors -serial file:serial.log`
-- **Aceite:** `timeout 10 qemu-system-x86_64 -m 512M -cdrom apolloos.iso -drive if=pflash,format=raw,unit=0,file=/usr/share/OVMF/x64/OVMF_CODE.4m.fd,readonly=on ... -vga std -display none -serial file:serial.log` contém `ApolloOS: Starting kernel` (não `X64 Exception`). `fb_init` recebe `multiboot_tag_framebuffer:8` válido em EFI
+### P0.2 GRUB EFI multiboot2 PF em OVMF → FIXED via Limine 7.12.0
+- **Problema:** com `OVMF_CODE.4m.fd` `BdsDxe: Booting 'ApolloOS'` → `!!!! X64 Exception #PF ... ImageBase 0xF3D008` antes de `kernel_main` no GRUB EFI `multiboot2.mod` (testado `minimal/efi_gop/no-fb` todos PF, `WIP boot.asm CS.base` não resolveu). Afeta `DOOM_GPU_FALLBACK.md:88` fallback `UEFI GOP Linear FB`.
+- **Solução:** portado para **Limine 7.12.0** `PROTOCOL=multiboot2` `limine.cfg:4` (`KERNEL_PATH=boot:///boot/apolloos.bin` `MODULE_PATH=boot:///boot/fw.cpio`) — Limine `BOOTX64.EFI` `limine-uefi-cd.bin` `limine-bios-cd.bin` `limine-bios.sys` em `limine/` + `Makefile:56` `xorriso -as mkisofs -b boot/limine-bios-cd.bin ... --efi-boot boot/limine-uefi-cd.bin` + `limine/limine bios-install`. Mantido `grub-iso` fallback `make grub-iso`.
+- **Arquivos:** `boot/boot.asm:9-21`, `limine.cfg:1`, `limine/BOOTX64.EFI`, `kernel/kernel.c:40` `fb_init(multiboot_info)` , `kernel/drivers/framebuffer.c:1`, `Makefile:56`
+- **Aceite:** `qemu-system-x86_64 -m 512M -cdrom apolloos.iso` BIOS `SeaBIOS` **PASS** `176` linhas `serial.log` + `qemu -bios OVMF_CODE.4m.fd` UEFI **PASS** `ApolloOS: Starting kernel` `FW: cache initialized` `ASSIGN/MSGPORT PASS` (`172` linhas, `DRM-SCHED` FIFO `jobs completaram fora de ordem` em UEFI é bug conhecido `timer 100Hz` + `workqueue` passivo `P1.3`, não bloqueia boot)
 - **Dependência:** P0.1
 
 ### P0.3 Mapeamento PCI BARs real Polaris `BAR0/BAR1/BAR5` sem `sizing` que quebra KVM
