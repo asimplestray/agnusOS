@@ -85,40 +85,47 @@ static const struct amdgpu_asic_entry *amdgpu_find_asic(uint16_t dev_id)
 
 static int amdgpu_map_rmmio(struct amdgpu_device *adev)
 {
-    uint64_t bar0 = pci_read_bar(adev->bus, adev->dev, adev->func, 0);
+    /* Na GPU real Polaris (dev_id 0x6FDF), o MMIO é o BAR5 (256 KB non-prefetchable).
+     * No emulador vgpu, o MMIO é o BAR0 (16 MB). */
+    int bar_idx = (adev->dev_id == 0x6FDF) ? 5 : 0;
+    uint32_t bar_val = pci_read_bar(adev->bus, adev->dev, adev->func, bar_idx);
 
-    if (!bar0 || (bar0 & 1))
+    if (!bar_val || (bar_val & 1))
         return -EINVAL;
 
-    adev->rmmio_phys = bar0 & ~0xFULL;
+    adev->rmmio_phys = bar_val & ~0xFULL;
     adev->rmmio_virt = AMDGPU_RMMIO_VADDR;
 
-    vmm_map_region(adev->rmmio_virt, adev->rmmio_phys, AMDGPU_MMIO_SIZE,
+    uint32_t mmio_size = (adev->dev_id == 0x6FDF) ? (256u * 1024u) : AMDGPU_MMIO_SIZE;
+
+    vmm_map_region(adev->rmmio_virt, adev->rmmio_phys, mmio_size,
                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
     return 0;
 }
 
 static int amdgpu_init_vram_aperture(struct amdgpu_device *adev)
 {
-    uint64_t bar1 = pci_read_bar(adev->bus, adev->dev, adev->func, 1);
+    /* Na GPU real Polaris (dev_id 0x6FDF), a VRAM é o BAR0 (64-bit, 256 MB abertura).
+     * No emulador vgpu, a VRAM é o BAR1. */
+    int bar_idx = (adev->dev_id == 0x6FDF) ? 0 : 1;
+    uint32_t bar_val = pci_read_bar(adev->bus, adev->dev, adev->func, bar_idx);
 
-    if (!bar1 || (bar1 & 1))
+    if (!bar_val || (bar_val & 1))
         return -EINVAL;
 
-    /* Tamanho da VRAM via CONFIG_MEMSIZE (MB), como o amdgpu real lê
-     * do FW scratch — NÃO fazemos sizing por config space: escrever nos
-     * registros de BAR sob KVM invalida o mapeamento do slot e derruba
-     * o guest. Default da emulação se o registro vier zerado. */
-    adev->vram_phys = bar1 & ~0xFULL;
+    adev->vram_phys = bar_val & ~0xFULL;
     adev->vram_virt = AMDGPU_VRAM_VADDR;
 
     /* rmmio precisa estar mapeado antes */
     if (!adev->rmmio_virt)
         return -EINVAL;
 
-    uint32_t mb = amdgpu_rreg(adev, mmCONFIG_MEMSIZE);
-    if (mb == 0 || mb > 512)
-        mb = 256;
+    uint32_t mb = 256;
+    if (adev->dev_id != 0x6FDF) {
+        mb = amdgpu_rreg(adev, mmCONFIG_MEMSIZE);
+        if (mb == 0 || mb > 512)
+            mb = 256;
+    }
     adev->vram_size = (size_t)mb << 20;
 
     vmm_map_region(adev->vram_virt, adev->vram_phys,
