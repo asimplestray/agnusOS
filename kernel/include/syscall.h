@@ -62,6 +62,12 @@ typedef struct aos_timeval {
 #define ENOSYS    AOS_ERR_NOT_FOUND
 #define EPIPE     AOS_ERR_NOT_FOUND
 #define EINTR     AOS_ERR_TIMEOUT
+#define EFAULT    AOS_ERR_BAD_ARGUMENT
+#define ENODEV    AOS_ERR_NOT_FOUND
+#define ENOTCONN  AOS_ERR_NOT_FOUND
+#define ETIME     AOS_ERR_TIMEOUT
+#define ENOTEMPTY AOS_ERR_IS_DIRECTORY
+#define EIO       AOS_ERR_READ_ERROR
 
 /* ------------------------------------------------------------------ */
 /* DOS file info — replaces POSIX struct stat                           */

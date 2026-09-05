@@ -1,4 +1,5 @@
 #include <exec/exec.h>
+#include <task.h>
 #include <kheap.h>
 #include <string.h>
 #include <serial.h>
@@ -311,6 +312,17 @@ void exec_cache_clear(void) {
 
 void exec_cache_clear_ea(void *addr, uint32_t size) {
     (void)addr; (void)size;
-    /* For now, full TLB flush */
     exec_cache_clear();
+}
+
+/* ------------------------------------------------------------------ */
+/* Priority                                                              */
+/* ------------------------------------------------------------------ */
+
+void exec_set_task_pri(void *task_ptr, int32_t new_pri) {
+    task_struct_t *task = (task_struct_t *)task_ptr;
+    if (!task) return;
+    if (new_pri < 0) new_pri = 0;
+    if (new_pri > 127) new_pri = 127;
+    task->priority = (uint64_t)new_pri;
 }

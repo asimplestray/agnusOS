@@ -64,6 +64,10 @@ static int cmd_execute(const char *args);
 static int cmd_clear(const char *args);
 static int cmd_date(const char *args);
 static int cmd_reboot(const char *args);
+static int cmd_which(const char *args);
+static int cmd_path(const char *args);
+static int cmd_set(const char *args);
+static int cmd_unset(const char *args);
 
 typedef struct { const char *name; int (*fn)(const char*); const char *help; } cmd_t;
 static cmd_t cmds[] = {
@@ -87,6 +91,10 @@ static cmd_t cmds[] = {
     {"Clear",    cmd_clear,    "Clear - limpa tela"},
     {"Date",     cmd_date,     "Date - data/hora RTC"},
     {"Reboot",   cmd_reboot,   "Reboot - reinicia"},
+    {"Which",    cmd_which,    "Which <name> - procura em C:"},
+    {"Path",     cmd_path,     "Path [dir] - mostra/adiciona path de busca"},
+    {"Set",      cmd_set,      "Set <var> <valor> - define variável de ambiente"},
+    {"Unset",    cmd_unset,    "Unset <var> - remove variável"},
     {NULL, NULL, NULL}
 };
 
@@ -368,9 +376,8 @@ static int cmd_status(const char *args){
         char pidb[16];
         itoa(t->pid, pidb, 10);
         const char *st="RUN";
-        if(t->state==TASK_STATE_INTERRUPTIBLE) st="WAIT";
-        else if(t->state==TASK_STATE_ZOMBIE) st="ZOMBIE";
-        else if(t->state==TASK_STATE_STOPPED) st="STOP";
+        if(t->state==TASK_STATE_WAITING) st="WAIT";
+        else if(t->state==TASK_STATE_SUSPENDED) st="SUSP";
         dogin_print("  PID "); dogin_print(pidb); dogin_print(" "); dogin_print(st);
         if(t==current) dogin_print(" <current>");
         dogin_print("\n");
@@ -483,6 +490,99 @@ static int cmd_reboot(const char *args){
     outb(0x64, 0xFE);
     while(1) __asm__ volatile("hlt");
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Which — find command in C: assign                                   */
+/* ------------------------------------------------------------------ */
+static int cmd_which(const char *args){
+    if(!args[0]){ dogin_println("Which: falta nome"); return -1; }
+    char path[ASSIGN_MAX_PATH];
+    /* Try C: prefix */
+    strcpy(path, "C:");
+    int i = 0;
+    while(args[i] && i < (int)(ASSIGN_MAX_PATH - 4)){ path[2 + i] = args[i]; i++; }
+    path[2 + i] = 0;
+    BPTR fh = dos_open(path, MODE_OLDFILE);
+    if(fh){
+        dos_close(fh);
+        dogin_print("Which: "); dogin_print(path); dogin_println(" (encontrado)");
+        return 0;
+    }
+    dogin_print("Which: não achei '"); dogin_print(args); dogin_println("' em C:");
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Path — show/modify search path                                      */
+/* ------------------------------------------------------------------ */
+static char search_path[ASSIGN_MAX_PATH] = "Work:bin";
+
+static int cmd_path(const char *args){
+    if(!args[0]){
+        dogin_print("Path: "); dogin_println(search_path);
+        return 0;
+    }
+    strncpy(search_path, args, sizeof(search_path) - 1);
+    search_path[sizeof(search_path) - 1] = 0;
+    dogin_print("Path: "); dogin_println(search_path);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Set / Unset — environment variables (simple key=value store)        */
+/* ------------------------------------------------------------------ */
+#define ENV_MAX 16
+#define ENV_KEYLEN 32
+#define ENV_VALLEN 64
+typedef struct { char key[ENV_KEYLEN]; char val[ENV_VALLEN]; } env_var_t;
+static env_var_t env_vars[ENV_MAX];
+static int env_count = 0;
+
+static int cmd_set(const char *args){
+    if(!args[0]){ dogin_println("Set: falta variável"); return -1; }
+    char key[ENV_KEYLEN] = {0};
+    const char *p = args;
+    int ki = 0;
+    while(*p && *p != '=' && ki < ENV_KEYLEN - 1) key[ki++] = *p++;
+    key[ki] = 0;
+    const char *val = "";
+    if(*p == '=') val = p + 1;
+    /* Find or create */
+    for(int i = 0; i < env_count; i++){
+        if(strcmp(env_vars[i].key, key) == 0){
+            strncpy(env_vars[i].val, val, ENV_VALLEN - 1);
+            env_vars[i].val[ENV_VALLEN - 1] = 0;
+            dogin_print(key); dogin_print("="); dogin_println(val);
+            return 0;
+        }
+    }
+    if(env_count < ENV_MAX){
+        strncpy(env_vars[env_count].key, key, ENV_KEYLEN - 1);
+        strncpy(env_vars[env_count].val, val, ENV_VALLEN - 1);
+        env_count++;
+        dogin_print(key); dogin_print("="); dogin_println(val);
+    } else {
+        dogin_println("Set: muitas variáveis");
+        return -1;
+    }
+    return 0;
+}
+
+static int cmd_unset(const char *args){
+    if(!args[0]){ dogin_println("Unset: falta variável"); return -1; }
+    for(int i = 0; i < env_count; i++){
+        if(strcmp(env_vars[i].key, args) == 0){
+            /* Shift down */
+            for(int j = i; j < env_count - 1; j++)
+                env_vars[j] = env_vars[j + 1];
+            env_count--;
+            dogin_println("Unset: ok");
+            return 0;
+        }
+    }
+    dogin_println("Unset: não achei");
+    return -1;
 }
 
 void dogin_init(void){

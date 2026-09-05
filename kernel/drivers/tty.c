@@ -237,11 +237,11 @@ void tty_handle_ctrl_c(tty_struct_t *tty) {
         screen_print("^C\r\n");
     }
     
-    /* Send SIGINT to foreground process group */
+    /* Send SIGINT (Ctrl+C) to foreground process group */
     task_struct_t *t = task_list;
     do {
-        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_ZOMBIE) {
-            force_sig(SIGINT, t);
+        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_SUSPENDED) {
+            force_sig(SIGBIT_BREAK, t);
         }
         t = t->next;
     } while (t != task_list);
@@ -254,11 +254,11 @@ void tty_handle_ctrl_z(tty_struct_t *tty) {
         screen_print("^Z\r\n");
     }
     
-    /* Send SIGTSTP to foreground process group */
+    /* Send SIGTSTP (Ctrl+Z) to foreground process group */
     task_struct_t *t = task_list;
     do {
-        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_ZOMBIE) {
-            force_sig(SIGTSTP, t);
+        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_SUSPENDED) {
+            force_sig(SIGBIT_SUSPEND, t);
         }
         t = t->next;
     } while (t != task_list);
@@ -315,7 +315,7 @@ int tty_read(tty_struct_t *tty, char *buf, int len) {
             } else {
                 /* Wait for input */
                 wait_event_interruptible(tty->read_wait, tty->canon_len > 0);
-                if (current && sigismember(&current->pending, SIGINT)) {
+                if (current && (current->sig_recv & SIGBIT_BREAK)) {
                     return -EINTR;
                 }
             }
@@ -337,7 +337,7 @@ int tty_read(tty_struct_t *tty, char *buf, int len) {
                 }
                 /* Wait for input */
                 wait_event_interruptible(tty->read_wait, tty->raw_head != tty->raw_tail);
-                if (current && sigismember(&current->pending, SIGINT)) {
+                if (current && (current->sig_recv & SIGBIT_BREAK)) {
                     return -EINTR;
                 }
             }

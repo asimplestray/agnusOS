@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <spinlock.h>
 #include <wait.h>
 #include <vfs.h>
@@ -12,91 +13,69 @@
 
 #define NR_TASKS 64
 
-/* Signal definitions */
-#define NSIG 32
-#define SIGHUP   1
-#define SIGINT   2
-#define SIGQUIT  3
-#define SIGILL   4
-#define SIGTRAP  5
-#define SIGABRT  6
-#define SIGBUS   7
-#define SIGFPE   8
-#define SIGKILL  9
-#define SIGUSR1  10
-#define SIGSEGV  11
-#define SIGUSR2  12
-#define SIGPIPE  13
-#define SIGALRM  14
-#define SIGTERM  15
-#define SIGSTKFLT 16
-#define SIGCHLD  17
-#define SIGCONT  18
-#define SIGSTOP  19
-#define SIGTSTP  20
-#define SIGTTIN  21
-#define SIGTTOU  22
-#define SIGURG   23
-#define SIGXCPU  24
-#define SIGXFSZ  25
-#define SIGVTALRM 26
-#define SIGPROF  27
-#define SIGWINCH 28
-#define SIGIO    29
-#define SIGPWR   30
-#define SIGSYS   31
-
-#define SIG_DFL ((void (*)(int))0)
-#define SIG_IGN ((void (*)(int))1)
-#define SIG_ERR ((void (*)(int))-1)
-
-#define SA_NOCLDSTOP  0x00000001
-#define SA_NOCLDWAIT  0x00000002
-#define SA_SIGINFO    0x00000004
-#define SA_RESTART    0x00000008
-#define SA_ONSTACK    0x00000100
-#define SA_NODEFER    0x00000400
-#define SA_RESETHAND  0x00000800
-
-typedef struct sigaction {
-    void (*sa_handler)(int);
-    void (*sa_sigaction)(int, void *, void *);
-    uint64_t sa_mask;
-    int sa_flags;
-    void (*sa_restorer)(void);
-} sigaction_t;
-
-typedef uint64_t sigset_t;
-
-#define _NSIG_WORDS ((NSIG + 63) / 64)
-
-typedef struct {
-    uint64_t sig[_NSIG_WORDS];
-} kernel_sigset_t;
-
-#define SIG_BLOCK     0
-#define SIG_UNBLOCK   1
-#define SIG_SETMASK   2
-
-/* ucontext for sigreturn */
-typedef struct {
-    uint64_t uc_flags;
-    struct ucontext *uc_link;
-    kernel_sigset_t uc_sigmask;
-    struct {
-        uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
-        uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-        uint64_t rip, cs, rflags, rsp, ss;
-    } uc_mcontext;
-} ucontext_t;
+/* ================================================================== */
+/* Task states — Exec model (no ZOMBIE, no STOPPED)                    */
+/* ================================================================== */
 
 typedef enum {
-    TASK_STATE_RUNNING = 0,
-    TASK_STATE_INTERRUPTIBLE = 1,
-    TASK_STATE_UNINTERRUPTIBLE = 2,
-    TASK_STATE_STOPPED = 4,
-    TASK_STATE_ZOMBIE = 8,
+    TASK_STATE_READY        = 0,   /* Ready to run */
+    TASK_STATE_RUNNING      = 1,   /* Currently executing */
+    TASK_STATE_WAITING      = 2,   /* Blocked on signal/msgport/timer */
+    TASK_STATE_SUSPENDED    = 3,   /* Suspended by another task */
+    /* Legacy compat — keep INTERRUPTIBLE/UNINTERRUPTIBLE mapped */
+    TASK_STATE_INTERRUPTIBLE = 2,  /* alias for WAITING */
+    TASK_STATE_UNINTERRUPTIBLE = 2, /* alias for WAITING */
 } task_state_t;
+
+/* ================================================================== */
+/* Exec signal bitmask — 32 bits, no POSIX handlers                    */
+/* ================================================================== */
+
+#define SIGBIT(n)    (1U << (n))
+
+/* Kernel-internal signal bits */
+#define SIGBIT_ABORT    SIGBIT(0)   /* Abort task */
+#define SIGBIT_FORCE    SIGBIT(1)   /* Force delivery (vmm fault etc) */
+#define SIGBIT_FPERR    SIGBIT(8)   /* FPU error */
+#define SIGBIT_BREAK    SIGBIT(15)  /* Ctrl+C */
+#define SIGBIT_SUSPEND  SIGBIT(16)  /* Ctrl+Z (stop) */
+#define SIGBIT_DOS      SIGBIT(29)  /* DOS operation complete */
+#define SIGBIT_SINGLE   SIGBIT(30)  /* Single step */
+#define SIGBIT_END      SIGBIT(31)  /* Task terminated */
+
+/* User-available signal bits (bits 2-7, 9-14, 16-28) */
+#define SIGBIT_USER_0   SIGBIT(2)
+#define SIGBIT_USER_1   SIGBIT(3)
+#define SIGBIT_USER_2   SIGBIT(4)
+#define SIGBIT_USER_3   SIGBIT(5)
+#define SIGBIT_USER_4   SIGBIT(6)
+#define SIGBIT_USER_5   SIGBIT(7)
+#define SIGBIT_USER_6   SIGBIT(9)
+#define SIGBIT_USER_7   SIGBIT(10)
+
+/* Legacy POSIX compat aliases (map to signal bits for send_sig/force_sig) */
+#define NSIG    32
+#define SIGKILL   0
+#define SIGSEGV  11
+#define SIGINT    2
+#define SIGTSTP  20
+#define SIGSTOP  19
+#define SIGCONT  18
+#define SIGPIPE  13
+#define SIGCHLD  17
+#define SIGTERM  15
+#define SIGBUS    7
+#define SIGFPE    8
+#define SIGILL    4
+#define SIGABRT   6
+#define SIGQUIT   3
+#define SIGUSR1  10
+#define SIGUSR2  12
+#define SIGALRM  14
+
+/* ================================================================== */
+/* Memory structures                                                    */
+/* ================================================================== */
 
 typedef struct mm_struct {
     uint64_t pml4_phys;
@@ -107,6 +86,10 @@ typedef struct mm_struct {
     spinlock_t lock;
     int refcount;
 } mm_struct_t;
+
+/* ================================================================== */
+/* File structures                                                      */
+/* ================================================================== */
 
 typedef struct file {
     vfs_node_t *node;
@@ -121,62 +104,65 @@ typedef struct files_struct {
     spinlock_t lock;
 } files_struct_t;
 
+/* ================================================================== */
+/* Task structure — Exec bitmask model                                  */
+/* ================================================================== */
+
 typedef struct task_struct {
     uint64_t pid;
     uint64_t tid;
     task_state_t state;
     int exit_code;
-    
+
     struct task_struct *parent;
     struct task_struct *children;
     struct task_struct *next_sibling;
     struct task_struct *prev_sibling;
-    
+
     mm_struct_t *mm;
     files_struct_t *files;
-    
+
     uint64_t kernel_stack;
     uint64_t user_stack;
-    
+
     uint64_t rip;
     uint64_t rsp;
     uint64_t rbp;
     uint64_t rflags;
-    
+
     uint64_t rax, rbx, rcx, rdx;
     uint64_t rsi, rdi;
     uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
-    
+
     uint64_t fs_base, gs_base;
 
-    vfs_node_t *cwd;  /* Current working directory in VFS */
-    
-    wait_queue_head_t wait_chldexit;
-    
+    vfs_node_t *cwd;
+
     uint64_t ticks;
     uint64_t priority;
     uint64_t counter;
-    
+
     /* FPU/SSE state (512 bytes, 16-byte aligned) */
     uint8_t fxsave_area[512] __attribute__((aligned(16)));
     bool fpu_used;
-    
-    /* Signal handling */
-    sigaction_t sigaction[NSIG];
-    kernel_sigset_t blocked;
-    kernel_sigset_t pending;
-    struct sigpending *signal_list;
-    
-    /* Process group / session for job control */
-    uint64_t pgid;
-    uint64_t sid;
-    
+
+    /* Exec signal bitmask (replaces POSIX sigaction/pending/blocked) */
+    uint32_t sig_recv;       /* bits received (pending) */
+    uint32_t sig_wait;       /* bits we're waiting for (Wait()) */
+    uint32_t sig_except;     /* exception handler mask */
+
     /* Errno for syscalls */
     int errno_val;
-    
+
     /* TTY for this process */
     struct tty_struct *tty;
-    
+
+    /* Process group for TTY job control */
+    uint64_t pgid;
+
+    /* Task name (AmigaOS-style) */
+    char name[32];
+
     struct task_struct *next;
     struct task_struct *prev;
 } task_struct_t;
@@ -190,25 +176,21 @@ void schedule(void);
 void task_init(void);
 void syscall_init(void);
 
-/* Signal handling */
+/* Exec signal API — bitmask model */
 void do_signal(struct interrupt_frame *frame);
 void force_sig(int sig, task_struct_t *t);
 void send_sig(int sig, task_struct_t *t, int priv);
 
 /* FPU/SSE management */
 static inline void fpu_save(void *buf) {
-    serial_print("ApolloOS: fpu_save entry\n");
-    // Enable FPU/SSE in CR0: MP=1 (Math Present), EM=0 (No emulation), TS=0 (Task not switched)
     __asm__ volatile(
         "mov %%cr0, %%rax\n"
-        "and $~0x8, %%rax\n"  // Clear TS (bit 3)
-        "or $0x2, %%rax\n"    // Set MP (bit 1)
+        "and $~0x8, %%rax\n"
+        "or $0x2, %%rax\n"
         "mov %%rax, %%cr0\n"
         ::: "rax", "memory"
     );
-    serial_print("ApolloOS: fpu_save CR0 modified\n");
     __asm__ volatile("fxsave (%0)" : : "r"(buf) : "memory");
-    serial_print("ApolloOS: fpu_save done\n");
 }
 
 static inline void fpu_restore(void *buf) {
@@ -216,11 +198,10 @@ static inline void fpu_restore(void *buf) {
 }
 
 static inline void fpu_init(void) {
-    // Enable FPU/SSE in CR0: MP=1 (Math Present), EM=0 (No emulation), TS=0 (Task not switched)
     __asm__ volatile(
         "mov %%cr0, %%rax\n"
-        "and $~0x8, %%rax\n"  // Clear TS (bit 3)
-        "or $0x2, %%rax\n"    // Set MP (bit 1)
+        "and $~0x8, %%rax\n"
+        "or $0x2, %%rax\n"
         "mov %%rax, %%cr0\n"
         ::: "rax", "memory"
     );
@@ -233,21 +214,6 @@ static inline task_struct_t *get_current(void) {
 
 static inline uint64_t get_pid(void) {
     return current ? current->pid : 0;
-}
-
-static inline int sigismember(kernel_sigset_t *set, int sig) {
-    if (!set || sig <= 0 || sig >= NSIG) return 0;
-    return (set->sig[(sig - 1) / 64] >> ((sig - 1) % 64)) & 1;
-}
-
-static inline void sigaddset(kernel_sigset_t *set, int sig) {
-    if (!set || sig <= 0 || sig >= NSIG) return;
-    set->sig[(sig - 1) / 64] |= (1ULL << ((sig - 1) % 64));
-}
-
-static inline void sigdelset(kernel_sigset_t *set, int sig) {
-    if (!set || sig <= 0 || sig >= NSIG) return;
-    set->sig[(sig - 1) / 64] &= ~(1ULL << ((sig - 1) % 64));
 }
 
 #endif

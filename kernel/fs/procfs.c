@@ -124,12 +124,11 @@ static task_struct_t *task_by_pid(uint64_t pid) {
 
 static const char *task_state_name(task_state_t st) {
     switch (st) {
-        case TASK_STATE_RUNNING:        return "running";
-        case TASK_STATE_INTERRUPTIBLE:  return "interruptible";
-        case TASK_STATE_UNINTERRUPTIBLE:return "uninterruptible";
-        case TASK_STATE_STOPPED:        return "stopped";
-        case TASK_STATE_ZOMBIE:         return "zombie";
-        default:                        return "unknown";
+        case TASK_STATE_RUNNING:    return "running";
+        case TASK_STATE_READY:      return "ready";
+        case TASK_STATE_WAITING:    return "waiting";
+        case TASK_STATE_SUSPENDED:  return "suspended";
+        default:                    return "unknown";
     }
 }
 

@@ -393,11 +393,11 @@ void vmm_page_fault_handler(uint64_t fault_addr, uint64_t error_code, uint64_t r
         return;
     }
 
-    /* Protection violation (write to read-only, execute NX, etc.) - send SIGSEGV */
+    /* Protection violation (write to read-only, execute NX, etc.) */
     if (current && (error_code & PF_ERR_U)) {
-        /* User mode fault - send SIGSEGV */
+        /* User mode fault — send force signal */
         extern void force_sig(int sig, task_struct_t *t);
-        force_sig(SIGSEGV, current);
+        force_sig(SIGBIT_FORCE, current);
         return;
     }
     

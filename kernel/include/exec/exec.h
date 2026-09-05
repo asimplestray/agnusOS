@@ -8,6 +8,9 @@
 #include <exec/signal.h>
 #include <exec/library.h>
 
+/* Forward decl for task_struct_t used in exec API */
+/* task_struct_t is defined in <task.h> — included by callers */
+
 /*
  * ExecBase — the heart of the Exec kernel.
  *
@@ -72,5 +75,8 @@ uint32_t exec_avail_mem(uint32_t flags);
 /* Cache */
 void     exec_cache_clear(void);
 void     exec_cache_clear_ea(void *addr, uint32_t size);
+
+/* Priority */
+void     exec_set_task_pri(void *task, int32_t new_pri);
 
 #endif

@@ -150,12 +150,9 @@ int64_t aos_wait(int64_t signal_bits, int64_t timeout_ms, struct interrupt_frame
     }
 
     /* Check if any requested signals are already pending */
-    for (int i = 0; i < 32; i++) {
-        if (signal_bits & (1ULL << i)) {
-            if (current->blocked.sig[i / 64] & (1ULL << (i % 64)))
-                return (int64_t)(1ULL << i);
-        }
-    }
+    uint32_t ready = (uint32_t)signal_bits & current->sig_recv;
+    if (ready)
+        return (int64_t)ready;
 
     /* No matching signals — yield (simplified, no blocking wait yet) */
     extern volatile uint64_t need_resched;
@@ -282,37 +279,22 @@ int64_t aos_clock(struct interrupt_frame *frame) {
 int64_t aos_signal(int64_t signal_bits, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -AOS_ERR_NOT_FOUND;
-    /* Set signal bits in current task's pending mask */
-    for (int i = 0; i < 32; i++) {
-        if (signal_bits & (1ULL << i)) {
-            current->blocked.sig[i / 64] |= (1ULL << (i % 64));
-        }
-    }
+    current->sig_recv |= (uint32_t)signal_bits;
     return 0;
 }
 
 int64_t aos_setsignal(int64_t new_mask, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -AOS_ERR_NOT_FOUND;
-    /* Return old mask, set new one */
-    uint32_t old = 0;
-    for (int i = 0; i < 32; i++) {
-        if (current->blocked.sig[0] & (1ULL << i)) old |= (1U << i);
-    }
-    current->blocked.sig[0] = (uint64_t)new_mask;
+    uint32_t old = current->sig_recv;
+    current->sig_recv = (uint32_t)new_mask;
     return (int64_t)old;
 }
 
 int64_t aos_return_signal(struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -AOS_ERR_NOT_FOUND;
-    /* Return current pending signals */
-    uint32_t pending = 0;
-    for (int i = 0; i < 32; i++) {
-        if (current->blocked.sig[i / 64] & (1ULL << (i % 64)))
-            pending |= (1U << i);
-    }
-    return (int64_t)pending;
+    return (int64_t)current->sig_recv;
 }
 
 int64_t aos_send_signal(int64_t pid, int64_t signal_bits, struct interrupt_frame *frame) {
@@ -322,10 +304,9 @@ int64_t aos_send_signal(int64_t pid, int64_t signal_bits, struct interrupt_frame
     if (!t) return -AOS_ERR_NOT_FOUND;
     do {
         if (t->pid == (uint64_t)pid) {
-            for (int i = 0; i < 32; i++) {
-                if (signal_bits & (1ULL << i))
-                    send_sig(i + 1, t, 0);
-            }
+            t->sig_recv |= (uint32_t)signal_bits;
+            if (t->state == TASK_STATE_WAITING)
+                t->state = TASK_STATE_RUNNING;
             return 0;
         }
         t = t->next;
