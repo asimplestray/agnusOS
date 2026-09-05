@@ -193,6 +193,17 @@ void screen_putc(char c) {
         }
     }
 
+    if (u == '\b') {
+        if (terminal_column > 0) {
+            terminal_column--;
+            /* erase the character on screen */
+            const size_t idx = terminal_row * VGA_WIDTH + terminal_column;
+            vga_buffer[idx] = vga_entry(' ', terminal_color);
+            screen_fb_draw_char(terminal_column, terminal_row, ' ', terminal_color);
+        }
+        return;
+    }
+
     if (u == '\n') {
         terminal_column = 0;
         if (++terminal_row == VGA_HEIGHT) {
