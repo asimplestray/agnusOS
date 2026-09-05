@@ -32,12 +32,15 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o \
       build/drm_gem.o \
       build/assign.o build/msgport.o \
+      build/exec.o build/exec_signal.o build/exec_library.o \
+      build/dos.o build/dos_path.o \
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
       build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
       build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
       build/amdgpu_gfx.o build/amdgpu_fw.o build/thermal_monitor.o build/gpu_test_pattern.o \
-      build/dc_core.o build/dce_resource.o build/dcn_resource.o
+      build/dc_core.o build/dce_resource.o build/dcn_resource.o \
+      build/dogin.o
 
 # Output
 ISO_OUT = apolloos.iso
@@ -405,6 +408,36 @@ build/assign.o: kernel/fs/assign.c kernel/include/assign.h
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/msgport.o: kernel/ipc/msgport.c kernel/include/msgport.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/exec.o: kernel/exec/exec.c kernel/include/exec/exec.h kernel/include/exec/task.h kernel/include/exec/signal.h kernel/include/exec/library.h kernel/include/exec/types.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/exec_signal.o: kernel/exec/signal.c kernel/include/exec/signal.h kernel/include/exec/task.h kernel/include/exec/exec.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/exec_library.o: kernel/exec/library.c kernel/include/exec/library.h kernel/include/exec/exec.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dos.o: kernel/dos/dos.c kernel/include/dos/dos.h kernel/include/dos/types.h kernel/include/vfs.h kernel/include/assign.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dos_path.o: kernel/dos/path.c kernel/include/dos/path.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/dogin.o: kernel/dogin/dogin.c kernel/include/dogin.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

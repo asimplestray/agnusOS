@@ -7,90 +7,109 @@
 #include <idt.h>
 #include <msgport.h>
 
-struct timespec {
-    int64_t tv_sec;
-    int64_t tv_nsec;
-};
+/* ------------------------------------------------------------------ */
+/* ApolloOS time — replaces POSIX struct timespec                       */
+/* ------------------------------------------------------------------ */
 
-/* Errno constants */
-#define EPERM            1
-#define ENOENT           2
-#define ESRCH            3
-#define EINTR            4
-#define EIO              5
-#define ENXIO            6
-#define E2BIG            7
-#define ENOEXEC          8
-#define EBADF            9
-#define ECHILD          10
-#define EAGAIN          11
-#define ENOMEM          12
-#define EACCES          13
-#define EFAULT          14
-#define ENOTBLK         15
-#define EBUSY           16
-#define EEXIST          17
-#define EXDEV           18
-#define ENODEV          19
-#define ENOTDIR         20
-#define EISDIR          21
-#define EINVAL          22
-#define ENFILE          23
-#define EMFILE          24
-#define ENOTTY          25
-#define ETXTBSY         26
-#define EFBIG           27
-#define ENOSPC          28
-#define ESPIPE          29
-#define EROFS           30
-#define EMLINK          31
-#define EPIPE           32
-#define EDOM            33
-#define ERANGE          34
-#define ENOSYS          38
+typedef struct aos_timeval {
+    int64_t tv_secs;    /* seconds */
+    int32_t tv_micros;  /* microseconds */
+} aos_timeval_t;
 
-/* Open flags */
-#define O_RDONLY         0x0000
-#define O_WRONLY         0x0001
-#define O_RDWR           0x0002
-#define O_ACCMODE        0x0003
-#define O_CREAT          0x0040
-#define O_EXCL           0x0080
-#define O_NOCTTY         0x0100
-#define O_TRUNC          0x0200
-#define O_APPEND         0x0400
-#define O_NONBLOCK       0x0800
-#define O_SYNC           0x1000
-#define O_DIRECTORY      0x2000
-#define O_NOFOLLOW       0x4000
-#define O_CLOEXEC        0x8000
+/* ------------------------------------------------------------------ */
+/* AmigaOS error codes (replace POSIX errno)                            */
+/* ------------------------------------------------------------------ */
 
-struct stat {
-    uint64_t st_dev;
-    uint64_t st_ino;
-    uint64_t st_mode;
-    uint64_t st_nlink;
-    uint64_t st_uid;
-    uint64_t st_gid;
-    uint64_t st_rdev;
-    int64_t  st_size;
-    int64_t  st_blksize;
-    int64_t  st_blocks;
-    int64_t  st_atime;
-    int64_t  st_mtime;
-    int64_t  st_ctime;
-};
+#define AOS_ERR_OK              0
+#define AOS_ERR_NOT_FOUND       1
+#define AOS_ERR_NO_MEMORY       2
+#define AOS_ERR_BAD_ARGUMENT    3
+#define AOS_ERR_IS_DIRECTORY    4
+#define AOS_ERR_NOT_DIRECTORY   5
+#define AOS_ERR_FILE_EXISTS     6
+#define AOS_ERR_NO_PERMISSION   7
+#define AOS_ERR_DISK_FULL       8
+#define AOS_ERR_DEVICE_BUSY     9
+#define AOS_ERR_TIMEOUT        10
+#define AOS_ERR_TOO_BIG        11
+#define AOS_ERR_READ_ONLY      12
+#define AOS_ERR_NOT_EXECUTABLE 13
+#define AOS_ERR_NO_PORT        14
+#define AOS_ERR_NO_SIGNAL      15
+#define AOS_ERR_MAX            16
 
-/* dirent for getdents */
-struct dirent {
-    uint64_t d_ino;
-    uint64_t d_off;
-    uint16_t d_reclen;
-    uint8_t  d_type;
-    char     d_name[256];
-};
+/* Legacy errno compat (maps to AOS_ERR_*) */
+#define ENOENT    AOS_ERR_NOT_FOUND
+#define ENOMEM    AOS_ERR_NO_MEMORY
+#define EINVAL    AOS_ERR_BAD_ARGUMENT
+#define EISDIR    AOS_ERR_IS_DIRECTORY
+#define ENOTDIR   AOS_ERR_NOT_DIRECTORY
+#define EEXIST    AOS_ERR_FILE_EXISTS
+#define EACCES    AOS_ERR_NO_PERMISSION
+#define ENOSPC    AOS_ERR_DISK_FULL
+#define EBUSY     AOS_ERR_DEVICE_BUSY
+#define ETIMEDOUT AOS_ERR_TIMEOUT
+#define E2BIG     AOS_ERR_TOO_BIG
+#define EROFS     AOS_ERR_READ_ONLY
+#define ENOEXEC   AOS_ERR_NOT_EXECUTABLE
+#define EPERM     AOS_ERR_NO_PERMISSION
+#define ESRCH     AOS_ERR_NOT_FOUND
+#define ECHILD    AOS_ERR_NOT_FOUND
+#define EBADF     AOS_ERR_BAD_ARGUMENT
+#define EMFILE    AOS_ERR_NO_MEMORY
+#define ENOTTY    AOS_ERR_BAD_ARGUMENT
+#define ERANGE    AOS_ERR_BAD_ARGUMENT
+#define ENOSYS    AOS_ERR_NOT_FOUND
+#define EPIPE     AOS_ERR_NOT_FOUND
+#define EINTR     AOS_ERR_TIMEOUT
 
-/* Socket structures */
+/* ------------------------------------------------------------------ */
+/* DOS file info — replaces POSIX struct stat                           */
+/* ------------------------------------------------------------------ */
+
+/* Note: file_info_block_t is defined in <dos/dos.h> */
+
+/* ------------------------------------------------------------------ */
+/* DOS directory entry — replaces POSIX struct dirent                    */
+/* ------------------------------------------------------------------ */
+
+typedef struct aos_dir_entry {
+    char     aod_Name[108];
+    int32_t  aod_Type;    /* >0 = dir, <0 = file */
+    int32_t  aod_Size;
+} aos_dir_entry_t;
+
+/* ------------------------------------------------------------------ */
+/* Open flags — simplified AmigaDOS mode bits                            */
+/* ------------------------------------------------------------------ */
+
+#define AOS_O_RDONLY   0   /* MODE_OLDFILE read */
+#define AOS_O_WRONLY   1   /* MODE_NEWFILE write */
+#define AOS_O_RDWR     2   /* read+write */
+#define AOS_O_CREAT    4
+#define AOS_O_TRUNC    8
+#define AOS_O_APPEND  16
+
+/* Legacy compat */
+#define O_RDONLY  AOS_O_RDONLY
+#define O_WRONLY  AOS_O_WRONLY
+#define O_RDWR    AOS_O_RDWR
+#define O_ACCMODE 3
+#define O_CREAT   AOS_O_CREAT
+#define O_TRUNC   AOS_O_TRUNC
+#define O_APPEND  AOS_O_APPEND
+#define O_EXCL    0
+#define O_NOCTTY  0
+#define O_NONBLOCK 0
+#define O_SYNC    0
+#define O_DIRECTORY 0
+#define O_NOFOLLOW 0
+#define O_CLOEXEC 0
+
+/* ------------------------------------------------------------------ */
+/* Socket types                                                         */
+/* ------------------------------------------------------------------ */
+
 struct sockaddr {
     uint16_t sa_family;
     char     sa_data[14];
@@ -107,102 +126,111 @@ struct sockaddr_in {
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
 
-/* ApolloOS DOS-trap dispatch table.
- * Naming follows AmigaDOS / Exec.library conventions while keeping the
- * numeric ABI identical to the previous Linux-like layout. */
+/* ------------------------------------------------------------------ */
+/* ApolloOS trap numbers — frozen in uAPI 1.0                           */
+/*                                                                     */
+/* Naming follows AmigaDOS/Exec conventions. Numeric ABI is stable.     */
+/* ------------------------------------------------------------------ */
 
-#define AOS_Exit            0   /* was SYS_EXIT        */
-#define AOS_SpawnTask       1   /* was SYS_FORK        */
-#define AOS_Read            2   /* was SYS_READ        */
-#define AOS_Write           3   /* was SYS_WRITE       */
-#define AOS_Open            4   /* was SYS_OPEN        */
-#define AOS_Close           5   /* was SYS_CLOSE       */
-#define AOS_Wait            6   /* was SYS_WAITPID     */
-#define AOS_LoadSeg         7   /* was SYS_EXECVE      */
-#define AOS_SetBrk          8   /* was SYS_BRK         */
-#define AOS_AllocMem        9   /* was SYS_MMAP        */
-#define AOS_FreeMem        10   /* was SYS_MUNMAP      */
-#define AOS_DoIO           11   /* was SYS_IOCTL       */
-#define AOS_FindTask       12   /* was SYS_GETPID      */
-#define AOS_Yield          13   /* was SYS_YIELD       */
-#define AOS_Delay          14   /* was SYS_NANOSLEEP   */
-#define AOS_GetSysTime     15   /* was SYS_GETTIME     */
-#define AOS_AddTask        16   /* was SYS_SPAWN       */
-#define AOS_Signal         17   /* was SYS_RT_SIGACTION  */
-#define AOS_SetSignal      18   /* was SYS_RT_SIGPROCMASK */
-#define AOS_ReturnSignal   19   /* was SYS_RT_SIGRETURN   */
-#define AOS_SendSignal     20   /* was SYS_KILL         */
-#define AOS_Pipe           21   /* was SYS_PIPE         */
-#define AOS_Seek           22   /* was SYS_LSEEK        */
-#define AOS_Examine        23   /* was SYS_STAT         */
-#define AOS_Clock          24   /* was SYS_CLOCK_GETTIME*/
-#define AOS_PutStr         25   /* was SYS_SYSLOG       */
-#define AOS_IoErr          26   /* was SYS_GET_ERRNO    */
-#define AOS_SetIoErr       27   /* was SYS_SET_ERRNO    */
-#define AOS_SetProcGroup   28   /* was SYS_SETPGID      */
-#define AOS_GetProcGroup   29   /* was SYS_GETPGID      */
-#define AOS_SetConProc     30   /* was SYS_TCSETPGRP    */
-#define AOS_GetConProc     31   /* was SYS_TCGETPGRP    */
-#define AOS_CreateDir      32   /* was SYS_MKDIR        */
-#define AOS_DeleteDir      33   /* was SYS_RMDIR        */
-#define AOS_DeleteFile     34   /* was SYS_UNLINK       */
-#define AOS_CurrentDir     35   /* was SYS_CHDIR        */
-#define AOS_CurrentDirFD   36   /* was SYS_FCHDIR       */
-#define AOS_LockCWD        37   /* was SYS_GETCWD       */
-#define AOS_Rename         38   /* was SYS_RENAME       */
-#define AOS_ExamineDir     39   /* was SYS_GETDENTS     */
-#define AOS_Socket         40   /* was SYS_SOCKET       */
-#define AOS_Bind           41   /* was SYS_BIND         */
-#define AOS_Send           42   /* was SYS_SENDTO       */
-#define AOS_Recv           43   /* was SYS_RECVFROM     */
-#define AOS_CloseSocket    44   /* was SYS_SOCK_CLOSE   */
-#define AOS_Flush          45   /* was SYS_FSYNC        */
-#define AOS_Assign         46   /* Amiga assign         */
-#define AOS_CreatePort     47   /* was SYS_MSGPORT_CREATE */
-#define AOS_DeletePort     48   /* was SYS_MSGPORT_DELETE */
-#define AOS_PutMsg         49   /* was SYS_MSGPORT_PUT    */
-#define AOS_GetMsg         50   /* was SYS_MSGPORT_GET    */
-#define AOS_WaitPort       51   /* was SYS_MSGPORT_WAIT   */
-#define AOS_ReplyMsg       52   /* was SYS_MSGPORT_REPLY  */
+#define AOS_Exit            0   /* task exit */
+#define AOS_SpawnTask       1   /* CreateTask (AmigaOS fork replacement) */
+#define AOS_Read            2   /* dos_read via DOS handle */
+#define AOS_Write           3   /* dos_write via DOS handle */
+#define AOS_Open            4   /* dos_open */
+#define AOS_Close           5   /* dos_close */
+#define AOS_Wait            6   /* exec_wait (signal bitmask wait) */
+#define AOS_LoadSeg         7   /* LoadSeg — load ELF into new task */
+#define AOS_SetBrk          8   /* exec_alloc_mem (heap growth) */
+#define AOS_AllocMem        9   /* exec_alloc_mem with MEMF flags */
+#define AOS_FreeMem        10   /* exec_free_mem */
+#define AOS_DoIO           11   /* ioctl — TTY/DRM control */
+#define AOS_FindTask       12   /* exec find current task */
+#define AOS_Yield          13   /* yield to scheduler */
+#define AOS_Delay          14   /* exec_delay (ticks) */
+#define AOS_GetSysTime     15   /* exec_eclock */
+#define AOS_AddTask        16   /* exec_create_task (kernel only) */
+#define AOS_Signal         17   /* exec_signal (set signal bits) */
+#define AOS_SetSignal      18   /* exec_set_signal (swap mask) */
+#define AOS_ReturnSignal   19   /* exec_check_signal */
+#define AOS_SendSignal     20   /* exec_signal on another task */
+#define AOS_Pipe           21   /* create MsgPort pair (replaces pipe) */
+#define AOS_Seek           22   /* dos_seek */
+#define AOS_Examine        23   /* dos_examine → file_info_block_t */
+#define AOS_Clock          24   /* exec_eclock */
+#define AOS_PutStr         25   /* serial/log output */
+#define AOS_IoErr          26   /* dos_io_err */
+#define AOS_SetIoErr       27   /* dos_set_io_err */
+#define AOS_SetProcGroup   28   /* (kept for compat) */
+#define AOS_GetProcGroup   29   /* (kept for compat) */
+#define AOS_SetConProc     30   /* TTY foreground pgrp */
+#define AOS_GetConProc     31   /* TTY foreground pgrp */
+#define AOS_CreateDir      32   /* dos_create_dir */
+#define AOS_DeleteDir      33   /* dos_delete_file (dirs) */
+#define AOS_DeleteFile     34   /* dos_delete_file */
+#define AOS_CurrentDir     35   /* dos_current_dir */
+#define AOS_CurrentDirFD   36   /* dos_current_dir (by BPTR) */
+#define AOS_LockCWD        37   /* get current assign path */
+#define AOS_Rename         38   /* dos_rename */
+#define AOS_ExamineDir     39   /* dos_ex_next → file_info_block_t */
+#define AOS_Socket         40   /* network socket */
+#define AOS_Bind           41   /* network bind */
+#define AOS_Send           42   /* network send */
+#define AOS_Recv           43   /* network recv */
+#define AOS_CloseSocket    44   /* network close */
+#define AOS_Flush          45   /* dos_flush */
+#define AOS_Assign         46   /* assign_set/lookup/unset */
+#define AOS_CreatePort     47   /* msgport_create */
+#define AOS_DeletePort     48   /* msgport_delete */
+#define AOS_PutMsg         49   /* msgport_put */
+#define AOS_GetMsg         50   /* msgport_get */
+#define AOS_WaitPort       51   /* msgport_wait */
+#define AOS_ReplyMsg       52   /* msgport_reply */
 
 #define NR_SYSCALLS         53
 
-/* Compat aliases (keep old SYS_ working during transition) */
-#define SYS_EXIT SYS_EXIT
-#define SYS_FORK AOS_SpawnTask
-#define SYS_READ AOS_Read
-#define SYS_WRITE AOS_Write
-#define SYS_OPEN AOS_Open
-#define SYS_CLOSE AOS_Close
-#define SYS_WAITPID AOS_Wait
-#define SYS_EXECVE AOS_LoadSeg
-#define SYS_BRK AOS_SetBrk
-#define SYS_MMAP AOS_AllocMem
-#define SYS_MUNMAP AOS_FreeMem
-#define SYS_IOCTL AOS_DoIO
-#define SYS_GETPID AOS_FindTask
-#define SYS_YIELD AOS_Yield
-#define SYS_NANOSLEEP AOS_Delay
-#define SYS_GETTIME AOS_GetSysTime
-#define SYS_SPAWN AOS_AddTask
+/* ------------------------------------------------------------------ */
+/* Legacy compat aliases                                                */
+/* ------------------------------------------------------------------ */
+
+#define SYS_EXIT       AOS_Exit
+#define SYS_FORK       AOS_SpawnTask
+#define SYS_READ       AOS_Read
+#define SYS_WRITE      AOS_Write
+#define SYS_OPEN       AOS_Open
+#define SYS_CLOSE      AOS_Close
+#define SYS_WAITPID    AOS_Wait
+#define SYS_EXECVE     AOS_LoadSeg
+#define SYS_BRK        AOS_SetBrk
+#define SYS_MMAP       AOS_AllocMem
+#define SYS_MUNMAP     AOS_FreeMem
+#define SYS_IOCTL      AOS_DoIO
+#define SYS_GETPID     AOS_FindTask
+#define SYS_YIELD      AOS_Yield
+#define SYS_NANOSLEEP  AOS_Delay
+#define SYS_GETTIME    AOS_GetSysTime
+#define SYS_SPAWN      AOS_AddTask
+
+/* ------------------------------------------------------------------ */
+/* Syscall prototypes                                                   */
+/* ------------------------------------------------------------------ */
 
 int64_t aos_exit(int64_t code, struct interrupt_frame *frame);
-int64_t aos_spawn_task(struct interrupt_frame *frame);
-int64_t aos_read(int64_t fd, void *buf, int64_t count, struct interrupt_frame *frame);
-int64_t aos_write(int64_t fd, const void *buf, int64_t count, struct interrupt_frame *frame);
-int64_t aos_open(const char *pathname, int64_t flags, int64_t mode, struct interrupt_frame *frame);
-int64_t aos_close(int64_t fd, struct interrupt_frame *frame);
-int64_t aos_wait(int64_t pid, int64_t *status, int64_t options, struct interrupt_frame *frame);
-int64_t aos_loadseg(const char *path, const char **argv, const char **envp, struct interrupt_frame *frame);
-int64_t aos_setbrk(void *addr, struct interrupt_frame *frame);
-void *aos_allocmem(void *addr, int64_t length, int64_t prot, int64_t flags, int64_t fd, int64_t offset, struct interrupt_frame *frame);
-int64_t aos_freemem(void *addr, int64_t length, struct interrupt_frame *frame);
-int64_t aos_doio(int64_t fd, uint64_t request, void *arg, struct interrupt_frame *frame);
+int64_t aos_spawn_task(int64_t entry_addr, int64_t stack_size, struct interrupt_frame *frame);
+int64_t aos_read(int64_t handle, void *buf, int64_t count, struct interrupt_frame *frame);
+int64_t aos_write(int64_t handle, const void *buf, int64_t count, struct interrupt_frame *frame);
+int64_t aos_open(const char *name, int64_t mode, struct interrupt_frame *frame);
+int64_t aos_close(int64_t handle, struct interrupt_frame *frame);
+int64_t aos_wait(int64_t signal_bits, int64_t timeout_ms, struct interrupt_frame *frame);
+int64_t aos_loadseg(const char *path, struct interrupt_frame *frame);
+int64_t aos_setbrk(int64_t size, struct interrupt_frame *frame);
+int64_t aos_allocmem(int64_t size, int64_t mem_flags, struct interrupt_frame *frame);
+int64_t aos_freemem(int64_t addr, int64_t size, struct interrupt_frame *frame);
+int64_t aos_doio(int64_t handle, uint64_t request, void *arg, struct interrupt_frame *frame);
 int64_t aos_find_task(struct interrupt_frame *frame);
 int64_t aos_yield(struct interrupt_frame *frame);
-int64_t aos_delay(const struct timespec *req, struct timespec *rem, struct interrupt_frame *frame);
-int64_t aos_getsystime(struct timespec *ts, struct interrupt_frame *frame);
-int64_t aos_clock(int64_t clk_id, struct timespec *ts, struct interrupt_frame *frame);
+int64_t aos_delay(int64_t ticks, struct interrupt_frame *frame);
+int64_t aos_getsystime(aos_timeval_t *tv, struct interrupt_frame *frame);
+int64_t aos_clock(struct interrupt_frame *frame);
 int64_t aos_putstr(int type, char *buf, int len, struct interrupt_frame *frame);
 int64_t aos_socket(int domain, int type, int protocol, struct interrupt_frame *frame);
 int64_t aos_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct interrupt_frame *frame);
@@ -210,28 +238,28 @@ int64_t aos_send(int sockfd, const void *buf, int len, int flags, const struct s
 int64_t aos_recv(int sockfd, void *buf, int len, int flags, struct sockaddr *src_addr, int *addrlen, struct interrupt_frame *frame);
 int64_t aos_close_socket(int64_t fd, struct interrupt_frame *frame);
 int64_t aos_addtask(void (*entry)(void), uint64_t flags, struct interrupt_frame *frame);
-int64_t aos_signal(int sig, const sigaction_t *act, sigaction_t *oldact, size_t sigsetsize, struct interrupt_frame *frame);
-int64_t aos_setsignal(int how, const sigset_t *set, sigset_t *oldset, size_t sigsetsize, struct interrupt_frame *frame);
+int64_t aos_signal(int64_t signal_bits, struct interrupt_frame *frame);
+int64_t aos_setsignal(int64_t new_mask, struct interrupt_frame *frame);
 int64_t aos_return_signal(struct interrupt_frame *frame);
-int64_t aos_send_signal(int64_t pid, int64_t sig, struct interrupt_frame *frame);
-int64_t aos_pipe(int64_t pipefd[2], struct interrupt_frame *frame);
-int64_t aos_seek(int64_t fd, int64_t offset, int64_t whence, struct interrupt_frame *frame);
-int64_t aos_examine(const char *pathname, struct stat *statbuf, struct interrupt_frame *frame);
+int64_t aos_send_signal(int64_t pid, int64_t signal_bits, struct interrupt_frame *frame);
+int64_t aos_pipe(int64_t port_ids[2], struct interrupt_frame *frame);
+int64_t aos_seek(int64_t handle, int64_t position, int64_t offset_type, struct interrupt_frame *frame);
+int64_t aos_examine(int64_t lock, void *fib_buf, int64_t fib_size, struct interrupt_frame *frame);
 int64_t aos_ioerr(struct interrupt_frame *frame);
-int64_t aos_set_ioerr(int64_t errno_val, struct interrupt_frame *frame);
+int64_t aos_set_ioerr(int64_t err, struct interrupt_frame *frame);
 int64_t aos_set_procgroup(int64_t pid, int64_t pgid, struct interrupt_frame *frame);
 int64_t aos_get_procgroup(int64_t pid, struct interrupt_frame *frame);
 int64_t aos_set_conproc(int64_t fd, int64_t pgid, struct interrupt_frame *frame);
 int64_t aos_get_conproc(int64_t fd, struct interrupt_frame *frame);
-int64_t aos_create_dir(const char *pathname, int64_t mode, struct interrupt_frame *frame);
-int64_t aos_delete_dir(const char *pathname, struct interrupt_frame *frame);
-int64_t aos_delete_file(const char *pathname, struct interrupt_frame *frame);
-int64_t aos_current_dir(const char *pathname, struct interrupt_frame *frame);
-int64_t aos_current_dir_fd(int64_t fd, struct interrupt_frame *frame);
+int64_t aos_create_dir(const char *name, struct interrupt_frame *frame);
+int64_t aos_delete_dir(const char *name, struct interrupt_frame *frame);
+int64_t aos_delete_file(const char *name, struct interrupt_frame *frame);
+int64_t aos_current_dir(const char *name, struct interrupt_frame *frame);
+int64_t aos_current_dir_fd(int64_t handle, struct interrupt_frame *frame);
 int64_t aos_lock_cwd(char *buf, int64_t size, struct interrupt_frame *frame);
-int64_t aos_rename(const char *oldpath, const char *newpath, struct interrupt_frame *frame);
-int64_t aos_examine_dir(int64_t fd, struct dirent *dirp, int64_t count, struct interrupt_frame *frame);
-int64_t aos_flush(int64_t fd, struct interrupt_frame *frame);
+int64_t aos_rename(const char *old_name, const char *new_name, struct interrupt_frame *frame);
+int64_t aos_examine_dir(int64_t lock, void *fib_buf, int64_t fib_size, struct interrupt_frame *frame);
+int64_t aos_flush(int64_t handle, struct interrupt_frame *frame);
 
 /* AmigaOS-style assigns + message ports */
 int64_t aos_assign(const char *name, const char *path, int64_t op, struct interrupt_frame *frame);
@@ -245,7 +273,7 @@ int64_t aos_reply_msg(int64_t token, const msg_t *msg, struct interrupt_frame *f
 void syscall_init(void);
 void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, struct interrupt_frame *frame);
 
-/* Launch a new user-mode process from an ELF file in RamFS */
+/* Load ELF into a new user task */
 int64_t task_create_user(const char *path);
 
 #endif

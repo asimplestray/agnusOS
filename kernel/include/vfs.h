@@ -4,43 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Errno codes used by VFS (guarded for multi-include) */
-#ifndef ENOENT
-#define ENOENT          2
-#endif
-#ifndef EIO
-#define EIO             5
-#endif
-#ifndef EBADF
-#define EBADF           9
-#endif
-#ifndef ENOMEM
-#define ENOMEM          12
-#endif
-#ifndef EACCES
-#define EACCES          13
-#endif
-#ifndef EEXIST
-#define EEXIST          17
-#endif
-#ifndef ENOTDIR
-#define ENOTDIR         20
-#endif
-#ifndef EISDIR
-#define EISDIR          21
-#endif
-#ifndef EINVAL
-#define EINVAL          22
-#endif
-#ifndef ENOSPC
-#define ENOSPC          28
-#endif
-#ifndef ENOSYS
-#define ENOSYS          38
-#endif
-#ifndef ENOTEMPTY
-#define ENOTEMPTY       39
-#endif
+/* Errno codes — canonical definitions in <syscall.h> (AOS_ERR_* compat) */
+/* VFS code should include <syscall.h> if it needs errno constants */
 
 /* Node type flags */
 #define VFS_FILE        0x01

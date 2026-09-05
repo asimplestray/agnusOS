@@ -35,6 +35,9 @@
 #include <amdgpu.h>
 #include <assign.h>
 #include <msgport.h>
+#include <dogin.h>
+#include <exec/exec.h>
+#include <dos/dos.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -81,6 +84,9 @@ void kernel_main(void) {
         kheap_init();
         serial_print("ApolloOS: kheap_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Kernel heap ok.");
+
+        exec_init();
+        dos_init();
 
         workqueue_init();
         serial_print("ApolloOS: workqueue_init done\n");
@@ -233,14 +239,18 @@ void kernel_main(void) {
     amdgpu_init();
     screen_print("========================================================\n\n");
 
-    screen_print("\n>> ApolloOS pronto. Iniciando processo usuario...\n");
+    screen_print("\n>> ApolloOS pronto. Iniciando dogin shell...\n");
 
-    /* Launch /bin/hello from RamFS in Ring 3 */
-    /* task_create_user("/bin/hello"); */
-
-    /* task_create_user() calls jump_to_usermode which does not return.
-     * If we get here somehow, spin safely — servindo os serviços
-     * periódicos do amdgpu (pattern/thermal) no idle. */
+    /* Launch dogin shell as kthread */
+    task_struct_t *dogin_task = task_create(dogin_main, 0);
+    if (dogin_task) {
+        dogin_task->fpu_used = false;
+        serial_print("ApolloOS: dogin shell started\n");
+        screen_log("OK", COLOR_LIGHT_GREEN, "dogin shell (AmigaDOS) iniciado.");
+    } else {
+        serial_print("ApolloOS: dogin shell failed to start\n");
+        screen_log("WARN", COLOR_BROWN, "dogin shell falhou ao iniciar.");
+    }
     while (1) {
         amdgpu_idle_tick();
         __asm__ volatile("hlt");

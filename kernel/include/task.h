@@ -192,10 +192,6 @@ void syscall_init(void);
 
 /* Signal handling */
 void do_signal(struct interrupt_frame *frame);
-int64_t aos_signal(int sig, const sigaction_t *act, sigaction_t *oldact, size_t sigsetsize, struct interrupt_frame *frame);
-int64_t aos_setsignal(int how, const sigset_t *set, sigset_t *oldset, size_t sigsetsize, struct interrupt_frame *frame);
-int64_t aos_return_signal(struct interrupt_frame *frame);
-int64_t aos_send_signal(int64_t pid, int64_t sig, struct interrupt_frame *frame);
 void force_sig(int sig, task_struct_t *t);
 void send_sig(int sig, task_struct_t *t, int priv);
 
