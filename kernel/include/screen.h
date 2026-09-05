@@ -42,4 +42,7 @@ void screen_print(const char* str);
 // Print a formatted log line with a color tag (e.g. [ OK ] or [ INFO ])
 void screen_log(const char* tag, vga_color_t tag_color, const char* message);
 
+// Set the cursor position
+void screen_set_cursor(size_t row, size_t col);
+
 #endif

@@ -116,6 +116,11 @@ void screen_set_color(vga_color_t fg, vga_color_t bg) {
     terminal_color = vga_entry_color(fg, bg);
 }
 
+void screen_set_cursor(size_t row, size_t col) {
+    if (row < VGA_HEIGHT) terminal_row = row;
+    if (col < VGA_WIDTH) terminal_column = col;
+}
+
 static void screen_scroll(void) {
     // Copy all rows up by one row in VGA text buffer
     for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {

@@ -932,9 +932,12 @@ static int cmd_netinfo(const char *args) {
 }
 
 void dogin_init(void){
+    screen_clear(COLOR_BLACK);
+    screen_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
     dogin_println("dogin: Workbench-like shell 0.1 (AmigaDOS)");
     dogin_println("  digite Help para comandos, ; para comentário, Work: para assigns");
     dogin_println("  If/Then/Else/EndIf, While/EndWhile, Repeat/Until");
+    dogin_print("\n");
 }
 
 void dogin_main(void){
