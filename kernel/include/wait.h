@@ -63,6 +63,7 @@ void wake_up_one(wait_queue_head_t *q);
 
 #define prepare_to_wait(q, wait, state_val) \
     do { \
+        wait_queue_remove(q, wait); \
         (wait)->state = (state_val); \
         (wait)->task = (void *)current; \
         wait_queue_add(q, wait); \
