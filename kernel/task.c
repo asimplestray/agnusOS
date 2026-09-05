@@ -408,12 +408,19 @@ void wake_up(wait_queue_head_t *q) {
     if (!q) return;
     unsigned long flags;
     spin_lock_irqsave((spinlock_irq_t *)&q->lock, &flags);
+    int woken = 0;
     wait_queue_entry_t *entry = q->head;
     while (entry) {
         wait_queue_entry_t *next = entry->next;
-        if (entry->task)
+        if (entry->task) {
             ((task_struct_t *)entry->task)->state = TASK_STATE_RUNNING;
+            woken++;
+        }
         entry = next;
+    }
+    if (woken) {
+        extern volatile uint64_t need_resched;
+        need_resched = 1;
     }
     spin_unlock_irqrestore((spinlock_irq_t *)&q->lock, flags);
 }

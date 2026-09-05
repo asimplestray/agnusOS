@@ -63,10 +63,25 @@ void wake_up_one(wait_queue_head_t *q);
 
 #define prepare_to_wait(q, wait, state_val) \
     do { \
-        wait_queue_remove(q, wait); \
+        unsigned long _wq_flags; \
+        spin_lock_irqsave((spinlock_irq_t *)&(q)->lock, &_wq_flags); \
+        /* Remove from list (inline, no lock) */ \
+        if ((wait)->prev) (wait)->prev->next = (wait)->next; \
+        else (q)->head = (wait)->next; \
+        if ((wait)->next) (wait)->next->prev = (wait)->prev; \
+        else (q)->tail = (wait)->prev; \
+        /* Update state and re-add (inline, no lock) */ \
         (wait)->state = (state_val); \
         (wait)->task = (void *)current; \
-        wait_queue_add(q, wait); \
+        (wait)->next = NULL; \
+        (wait)->prev = (q)->tail; \
+        if ((q)->tail) { \
+            (q)->tail->next = (wait); \
+        } else { \
+            (q)->head = (wait); \
+        } \
+        (q)->tail = (wait); \
+        spin_unlock_irqrestore((spinlock_irq_t *)&(q)->lock, _wq_flags); \
     } while (0)
 
 #define finish_wait(q, wait) \

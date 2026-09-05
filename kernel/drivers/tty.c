@@ -298,10 +298,10 @@ void tty_handle_backspace(tty_struct_t *tty) {
 
 int tty_read(tty_struct_t *tty, char *buf, int len) {
     if (!tty || !buf || len <= 0) return -1;
-    
+
     termios_t *t = &tty->termios;
     int read = 0;
-    
+
     if (t->c_lflag & ICANON) {
         /* Canonical mode - wait for newline or EOF */
         while (read < len) {
