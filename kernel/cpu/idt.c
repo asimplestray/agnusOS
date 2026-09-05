@@ -285,14 +285,21 @@ void irq_dispatcher(struct interrupt_frame *frame) {
 // Common C-level interrupt dispatcher called by Assembly handlers
 void interrupt_handler(struct interrupt_frame* frame) {
     // 1. Handle CPU exceptions (0..31)
+    //    Allow registered handlers for specific exceptions (e.g. #NM for FPU lazy restore)
     if (frame->int_no < 32) {
-        dump_registers(frame);
-        PANIC("CPU Exception %d: %s", frame->int_no, exception_messages[frame->int_no]);
+        if (interrupt_handlers[frame->int_no] != 0) {
+            interrupt_handlers[frame->int_no](frame);
+        } else {
+            dump_registers(frame);
+            PANIC("CPU Exception %d: %s", frame->int_no, exception_messages[frame->int_no]);
+        }
     }
 
     // 2. Handle registered hardware drivers (32..47)
-    if (interrupt_handlers[frame->int_no] != 0) {
-        interrupt_handlers[frame->int_no](frame);
+    if (frame->int_no >= 32) {
+        if (interrupt_handlers[frame->int_no] != 0) {
+            interrupt_handlers[frame->int_no](frame);
+        }
     }
 
     // 3. Check for pending signals before returning to userspace

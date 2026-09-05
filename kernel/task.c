@@ -29,6 +29,34 @@ static uint64_t next_pid = 1;
 
 static spinlock_irq_t runqueue_lock = { SPINLOCK_INIT, 0 };
 
+/* ================================================================== */
+/* FPU lazy restore — #NM handler (vector 7, Device Not Available)     */
+/* Only saves/restores FPU when a task actually uses floating-point.   */
+/* ================================================================== */
+static task_struct_t *fpu_owner = NULL;
+
+static void fpu_nm_handler(struct interrupt_frame *frame __attribute__((unused))) {
+    /* Save previous FPU owner's state */
+    if (fpu_owner && fpu_owner != current) {
+        fpu_save(fpu_owner->fxsave_area);
+    }
+    /* Restore current task's FPU state (or initialize if first use) */
+    if (current->fpu_used) {
+        fpu_restore(current->fxsave_area);
+    } else {
+        fpu_init();
+        current->fpu_used = true;
+    }
+    fpu_owner = current;
+    /* Clear CR0.TS so FPU instructions won't trap again */
+    __asm__ volatile(
+        "mov %%cr0, %%rax\n"
+        "and $~0x8, %%rax\n"
+        "mov %%rax, %%cr0\n"
+        ::: "rax", "memory"
+    );
+}
+
 #define RUNQUEUE_LOCK(flags) spin_lock_irqsave(&runqueue_lock, &(flags))
 #define RUNQUEUE_UNLOCK(flags) spin_unlock_irqrestore(&runqueue_lock, flags)
 
@@ -131,7 +159,19 @@ void task_init(void) {
     current = init_task;
     serial_print("ApolloOS: task_init - current set\n");
 
-    screen_log("OK", COLOR_LIGHT_GREEN, "Task scheduler initialized (preemptive).");
+    /* Register #NM (Device Not Available) handler for lazy FPU restore */
+    interrupts_register_handler(7, fpu_nm_handler);
+    serial_print("ApolloOS: task_init - FPU lazy restore (#NM handler) registered\n");
+
+    /* Enable CR0.TS so first FPU use triggers #NM for lazy init */
+    __asm__ volatile(
+        "mov %%cr0, %%rax\n"
+        "or $0x8, %%rax\n"
+        "mov %%rax, %%cr0\n"
+        ::: "rax", "memory"
+    );
+
+    screen_log("OK", COLOR_LIGHT_GREEN, "Task scheduler initialized (preemptive, FPU lazy).");
 }
 
 /* ================================================================== */
@@ -315,16 +355,11 @@ void schedule(void) {
         return;
     }
 
-    /* Save FPU of outgoing task */
-    if (current->fpu_used) {
+    /* Lazy FPU: save outgoing task's FPU only if it's the current FPU owner.
+     * The #NM handler will save/restore on-demand. */
+    if (fpu_owner == current && current->fpu_used) {
         fpu_save(current->fxsave_area);
-        /* Set TS so we lazy-restore on next FPU use */
-        __asm__ volatile(
-            "mov %%cr0, %%rax\n"
-            "or $0x8, %%rax\n"
-            "mov %%rax, %%cr0\n"
-            ::: "rax", "memory"
-        );
+        fpu_owner = NULL;
     }
 
     task_struct_t *prev = current;
@@ -343,16 +378,14 @@ void schedule(void) {
     /* Re-acquire lock for the resumed task */
     RUNQUEUE_LOCK(flags);
 
-    /* Restore FPU of newly-resumed task (if it had FPU active) */
-    if (current->fpu_used) {
-        __asm__ volatile(
-            "mov %%cr0, %%rax\n"
-            "and $~0x8, %%rax\n"
-            "mov %%rax, %%cr0\n"
-            ::: "rax", "memory"
-        );
-        fpu_restore(current->fxsave_area);
-    }
+    /* Lazy FPU: set CR0.TS so first FPU use by this task triggers #NM,
+     * which will restore the FPU state on demand. */
+    __asm__ volatile(
+        "mov %%cr0, %%rax\n"
+        "or $0x8, %%rax\n"
+        "mov %%rax, %%cr0\n"
+        ::: "rax", "memory"
+    );
 
     RUNQUEUE_UNLOCK(flags);
 
