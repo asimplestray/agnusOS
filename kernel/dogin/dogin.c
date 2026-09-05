@@ -18,6 +18,29 @@
 
 static char cwd_disp[ASSIGN_MAX_PATH] = "Work:";
 
+/* ================================================================== */
+/* Control flow state — If/Then/Else/EndIf + While/EndWhile nesting    */
+/* ================================================================== */
+#define IF_MAX_DEPTH 16
+#define LOOP_MAX_DEPTH 8
+
+static int if_depth = 0;
+static int skip_depth = 0;
+static int if_was_true[IF_MAX_DEPTH];
+
+/* Script loop support — set by dogin_exec_file, read by handlers */
+static char **script_lines = NULL;
+static int script_line_count = 0;
+static int script_line_idx = 0;
+
+/* While/Repeat loop stack */
+typedef struct {
+    int line_idx;   /* line to loop back to */
+    int is_repeat;  /* 1=Repeat/Until, 0=While/EndWhile */
+} loop_entry_t;
+static loop_entry_t loop_stack[LOOP_MAX_DEPTH];
+static int loop_sp = 0;
+
 /* helpers */
 static void dogin_print(const char *s) { screen_print(s); serial_print(s); }
 static void dogin_println(const char *s) { dogin_print(s); dogin_print("\n"); }
@@ -43,6 +66,20 @@ static void trim(char *s){
 }
 
 static const char *skip_ws(const char *p){ while(*p==' '||*p=='\t') p++; return p; }
+
+/* Case-insensitive word prefix check: does `str` start with `word` + whitespace/end? */
+static int starts_with_word_ci(const char *str, const char *word){
+    int len = 0;
+    while(word[len]) len++;
+    for(int i = 0; i < len; i++){
+        char cs = str[i], cw = word[i];
+        if(cs >= 'a' && cs <= 'z') cs -= 32;
+        if(cw >= 'a' && cw <= 'z') cw -= 32;
+        if(cs != cw) return 0;
+    }
+    char c = str[len];
+    return c == 0 || c == ' ' || c == '\t';
+}
 
 /* forward */
 static int cmd_list(const char *args);
@@ -98,6 +135,155 @@ static cmd_t cmds[] = {
     {NULL, NULL, NULL}
 };
 
+/* ================================================================== */
+/* Control flow handlers — If/Then/Else/EndIf/While/EndWhile/Repeat/Until */
+/* ================================================================== */
+
+/* Find "Then" keyword in args, returns pointer to it or NULL */
+static const char *find_then(const char *s){
+    const char *p = skip_ws(s);
+    while(*p){
+        if((p==s || *(p-1)==' ' || *(p-1)=='\t') &&
+           (p[0]=='T'||p[0]=='t') && (p[1]=='h'||p[1]=='H') &&
+           (p[2]=='e'||p[2]=='e') && (p[3]=='n'||p[3]=='n')){
+            char after = p[4];
+            if(after==0 || after==' ' || after=='\t') return p;
+        }
+        p++;
+    }
+    return NULL;
+}
+
+/* Find "Do" keyword in args (for While) */
+static const char *find_do(const char *s){
+    const char *p = skip_ws(s);
+    while(*p){
+        if((p==s || *(p-1)==' ' || *(p-1)=='\t') &&
+           (p[0]=='D'||p[0]=='d') && (p[1]=='o'||p[1]=='o')){
+            char after = p[2];
+            if(after==0 || after==' ' || after=='\t') return p;
+        }
+        p++;
+    }
+    return NULL;
+}
+
+static int handle_if(const char *line_after_if){
+    const char *p = skip_ws(line_after_if);
+    const char *then = find_then(p);
+    if(!then){ dogin_println("If: falta Then"); return -1; }
+
+    /* extract condition */
+    int clen = then - p;
+    if(clen > 255) clen = 255;
+    char condition[256];
+    memcpy(condition, p, clen);
+    condition[clen] = 0;
+    trim(condition);
+
+    int result = 0;
+    if(condition[0]) result = dogin_exec_line(condition);
+
+    const char *after = skip_ws(then + 4);
+    if(after[0] == 0){
+        /* block form: If <cond> Then\n */
+        if(if_depth >= IF_MAX_DEPTH){ dogin_println("If: muito profundo"); return -1; }
+        if_was_true[if_depth] = (result == 0);
+        if_depth++;
+        if(result != 0) skip_depth = 1;
+    } else {
+        /* single-line: If <cond> Then <action> */
+        if(result == 0) return dogin_exec_line(after);
+    }
+    return 0;
+}
+
+static int handle_else(void){
+    if(if_depth == 0){ dogin_println("Else: sem If"); return -1; }
+    if(skip_depth == 0){
+        /* were executing Then block → skip Else block */
+        skip_depth = 1;
+    } else if(skip_depth == 1){
+        /* were skipping Then block → execute Else block */
+        skip_depth = 0;
+    }
+    return 0;
+}
+
+static int handle_endif(void){
+    if(if_depth == 0){ dogin_println("EndIf: sem If"); return -1; }
+    if_depth--;
+    if(skip_depth > 0) skip_depth--;
+    return 0;
+}
+
+static int handle_while(const char *line_after_while){
+    if(loop_sp >= LOOP_MAX_DEPTH){ dogin_println("While: muito profundo"); return -1; }
+    const char *p = skip_ws(line_after_while);
+    const char *do_kw = find_do(p);
+    if(!do_kw){ dogin_println("While: falta Do"); return -1; }
+
+    int clen = do_kw - p;
+    if(clen > 255) clen = 255;
+    char condition[256];
+    memcpy(condition, p, clen);
+    condition[clen] = 0;
+    trim(condition);
+
+    int result = 0;
+    if(condition[0]) result = dogin_exec_line(condition);
+
+    if(result != 0){
+        /* condition false → skip to EndWhile */
+        skip_depth = 1;
+    }
+    /* store loop start for EndWhile */
+    loop_stack[loop_sp].line_idx = script_line_idx;
+    loop_stack[loop_sp].is_repeat = 0;
+    loop_sp++;
+    return 0;
+}
+
+static int handle_endwhile(void){
+    if(loop_sp == 0 || loop_stack[loop_sp-1].is_repeat){
+        dogin_println("EndWhile: sem While"); return -1;
+    }
+    loop_sp--;
+    if(skip_depth > 0){
+        /* we were skipping, block is done */
+        return 0;
+    }
+    /* loop back — adjust script_line_idx so next exec will re-run the While line */
+    script_line_idx = loop_stack[loop_sp].line_idx - 1;
+    return 0;
+}
+
+static int handle_repeat(void){
+    if(loop_sp >= LOOP_MAX_DEPTH){ dogin_println("Repeat: muito profundo"); return -1; }
+    loop_stack[loop_sp].line_idx = script_line_idx + 1;
+    loop_stack[loop_sp].is_repeat = 1;
+    loop_sp++;
+    return 0;
+}
+
+static int handle_until(const char *line_after_until){
+    if(loop_sp == 0 || !loop_stack[loop_sp-1].is_repeat){
+        dogin_println("Until: sem Repeat"); return -1;
+    }
+    const char *p = skip_ws(line_after_until);
+    int result = 0;
+    if(p[0]) result = dogin_exec_line(p);
+
+    loop_sp--;
+    if(result != 0){
+        /* condition true (non-zero return) → exit loop */
+        return 0;
+    }
+    /* condition false → loop back to Repeat */
+    script_line_idx = loop_stack[loop_sp].line_idx - 1;
+    return 0;
+}
+
 int dogin_exec_line(const char *line){
     char buf[256];
     int i=0;
@@ -105,9 +291,56 @@ int dogin_exec_line(const char *line){
     buf[i]=0;
     trim(buf);
     if(buf[0]==0 || buf[0]==';') return 0; // comentário Amiga ';'
-    // pega comando
+
+    const char *p = skip_ws(buf);
+
+    /* --- Control flow: skipping block (skip_depth > 0) --- */
+    if(skip_depth > 0){
+        /* nested block starts add to skip depth */
+        if(starts_with_word_ci(p, "If") || starts_with_word_ci(p, "While") ||
+           starts_with_word_ci(p, "Repeat")){
+            skip_depth++;
+            return 0;
+        }
+        /* block ends decrement skip depth */
+        if(starts_with_word_ci(p, "EndIf") || starts_with_word_ci(p, "EndWhile") ||
+           starts_with_word_ci(p, "EndFor")){
+            if(skip_depth > 0) skip_depth--;
+            return 0;
+        }
+        /* Else at our level: toggle */
+        if(starts_with_word_ci(p, "Else") && skip_depth == 1){
+            skip_depth = 0;
+            return 0;
+        }
+        return 0; /* skip everything else */
+    }
+
+    /* --- Control flow keywords (not skipping) --- */
+    if(starts_with_word_ci(p, "If")){
+        return handle_if(p + 2);
+    }
+    if(starts_with_word_ci(p, "Else")){
+        return handle_else();
+    }
+    if(starts_with_word_ci(p, "EndIf")){
+        return handle_endif();
+    }
+    if(starts_with_word_ci(p, "While")){
+        return handle_while(p + 5);
+    }
+    if(starts_with_word_ci(p, "EndWhile")){
+        return handle_endwhile();
+    }
+    if(starts_with_word_ci(p, "Repeat")){
+        return handle_repeat();
+    }
+    if(starts_with_word_ci(p, "Until")){
+        return handle_until(p + 5);
+    }
+
+    /* --- Normal command dispatch --- */
     char cmd[32]={0};
-    const char *p=skip_ws(buf);
     int ci=0;
     while(*p && *p!=' ' && *p!='\t' && ci<31){ cmd[ci++]=*p++; }
     cmd[ci]=0;
@@ -152,19 +385,59 @@ int dogin_exec_file(const char *path){
 
     data[got] = 0;
 
+    /* Split into lines for loop support (While/EndWhile, Repeat/Until) */
+    #define MAX_SCRIPT_LINES 256
+    char *lines[MAX_SCRIPT_LINES];
+    int line_count = 0;
     char line[256];
     int li = 0;
     for(int32_t j = 0; j <= got; j++){
         char c = (j < got) ? data[j] : '\n';
         if(c=='\n' || c=='\r'){
             line[li] = 0;
-            if(li > 0) dogin_exec_line(line);
+            if(li > 0 && line_count < MAX_SCRIPT_LINES){
+                lines[line_count] = kmalloc(li + 1);
+                if(lines[line_count]){
+                    memcpy(lines[line_count], line, li + 1);
+                    line_count++;
+                }
+            }
             li = 0;
         } else if(li < 255){
             line[li++] = c;
         }
     }
     kfree(data);
+
+    /* Save script context, execute line-by-line with loop support */
+    char **prev_lines = script_lines;
+    int prev_count = script_line_count;
+    int prev_idx = script_line_idx;
+
+    script_lines = lines;
+    script_line_count = line_count;
+    script_line_idx = 0;
+
+    while(script_line_idx < script_line_count){
+        dogin_exec_line(lines[script_line_idx]);
+        script_line_idx++;
+        /* Guard: max iterations to prevent infinite loops */
+        if(script_line_idx > line_count * 1000){
+            dogin_println("Execute: loop infinito (max 1000x)");
+            break;
+        }
+    }
+
+    /* Restore script context */
+    script_lines = prev_lines;
+    script_line_count = prev_count;
+    script_line_idx = prev_idx;
+
+    /* Free allocated lines */
+    for(int i = 0; i < line_count; i++){
+        if(lines[i]) kfree(lines[i]);
+    }
+
     return 0;
 }
 
@@ -444,6 +717,10 @@ static int cmd_help(const char *args){
     }
     dogin_println("Comandos Amiga-like:");
     for(int i=0;cmds[i].name;i++){ dogin_print("  "); dogin_print(cmds[i].name); dogin_print(" - "); dogin_println(cmds[i].help); }
+    dogin_println("  Estruturas de controle:");
+    dogin_println("    If <cmd> Then ... [Else ...] EndIf");
+    dogin_println("    While <cmd> Do ... EndWhile   (scripts .in)");
+    dogin_println("    Repeat ... Until <cmd>         (scripts .in)");
     dogin_println("  ; comentário  e  Work:Assigns  e  .in scripts");
     return 0;
 }
@@ -588,6 +865,7 @@ static int cmd_unset(const char *args){
 void dogin_init(void){
     dogin_println("dogin: Workbench-like shell 0.1 (AmigaDOS)");
     dogin_println("  digite Help para comandos, ; para comentário, Work: para assigns");
+    dogin_println("  If/Then/Else/EndIf, While/EndWhile, Repeat/Until");
 }
 
 void dogin_main(void){
