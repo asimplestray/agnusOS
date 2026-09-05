@@ -45,4 +45,11 @@ void screen_log(const char* tag, vga_color_t tag_color, const char* message);
 // Set the cursor position
 void screen_set_cursor(size_t row, size_t col);
 
+// Get current screen dimensions in characters
+size_t screen_get_rows(void);
+size_t screen_get_cols(void);
+
+// Update screen dimensions based on active display mode
+void screen_update_dimensions(void);
+
 #endif

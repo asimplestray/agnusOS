@@ -7,6 +7,8 @@
 #define VGA_ADDRESS 0xB8000
 
 static uint16_t* const vga_buffer = (uint16_t*)VGA_ADDRESS;
+static size_t screen_cols = VGA_WIDTH;
+static size_t screen_rows = VGA_HEIGHT;
 static size_t terminal_row;
 static size_t terminal_column;
 static uint8_t terminal_color;
@@ -61,8 +63,10 @@ static void screen_fb_scroll(void) {
     framebuffer_t *fb = fb_get_info();
     if (!fb || !fb->addr) return;
 
-    size_t copy_lines = (VGA_HEIGHT - 1) * 16;
-    if (copy_lines > fb->height) copy_lines = fb->height;
+    size_t copy_lines = (screen_rows - 1) * 16;
+    if (copy_lines + 16 > fb->height) {
+        copy_lines = (fb->height >= 16) ? (fb->height - 16) : 0;
+    }
 
     for (size_t y = 0; y < copy_lines; y++) {
         uint32_t *dst = fb->addr + y * fb->pixels_per_row;
@@ -71,10 +75,12 @@ static void screen_fb_scroll(void) {
             dst[x] = src[x];
         }
     }
+
+    uint32_t bg = vga_to_rgb32[(terminal_color >> 4) & 0x0F];
     for (size_t y = copy_lines; y < copy_lines + 16 && y < fb->height; y++) {
         uint32_t *dst = fb->addr + y * fb->pixels_per_row;
         for (size_t x = 0; x < fb->width; x++) {
-            dst[x] = 0;
+            dst[x] = bg;
         }
     }
 }
@@ -87,7 +93,29 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
     return (uint16_t)uc | ((uint16_t)color << 8);
 }
 
+void screen_update_dimensions(void) {
+    if (fb_is_ready()) {
+        framebuffer_t *fb = fb_get_info();
+        if (fb && fb->width >= 8 && fb->height >= 16) {
+            screen_cols = fb->width / 8;
+            screen_rows = fb->height / 16;
+            return;
+        }
+    }
+    screen_cols = VGA_WIDTH;
+    screen_rows = VGA_HEIGHT;
+}
+
+size_t screen_get_rows(void) {
+    return screen_rows;
+}
+
+size_t screen_get_cols(void) {
+    return screen_cols;
+}
+
 void screen_init(void) {
+    screen_update_dimensions();
     terminal_row = 0;
     terminal_column = 0;
     terminal_color = vga_entry_color(COLOR_LIGHT_GREY, COLOR_BLACK);
@@ -95,19 +123,21 @@ void screen_init(void) {
 }
 
 void screen_clear(vga_color_t bg) {
-    uint8_t color = vga_entry_color(COLOR_LIGHT_GREY, bg);
-    for (size_t y = 0; y < VGA_HEIGHT; y++) {
-        for (size_t x = 0; x < VGA_WIDTH; x++) {
-            const size_t index = y * VGA_WIDTH + x;
-            vga_buffer[index] = vga_entry(' ', color);
-        }
-    }
+    screen_update_dimensions();
     if (fb_is_ready()) {
         framebuffer_t *fb = fb_get_info();
         if (fb && fb->addr) {
             uint32_t color32 = vga_to_rgb32[bg & 0x0F];
             for (size_t i = 0; i < (size_t)fb->height * fb->pixels_per_row; i++) {
                 fb->addr[i] = color32;
+            }
+        }
+    } else {
+        uint8_t color = vga_entry_color(COLOR_LIGHT_GREY, bg);
+        for (size_t y = 0; y < VGA_HEIGHT; y++) {
+            for (size_t x = 0; x < VGA_WIDTH; x++) {
+                const size_t index = y * VGA_WIDTH + x;
+                vga_buffer[index] = vga_entry(' ', color);
             }
         }
     }
@@ -123,29 +153,32 @@ void screen_set_color(vga_color_t fg, vga_color_t bg) {
 }
 
 void screen_set_cursor(size_t row, size_t col) {
-    if (row < VGA_HEIGHT) terminal_row = row;
-    if (col < VGA_WIDTH) terminal_column = col;
+    if (row < screen_rows) terminal_row = row;
+    if (col < screen_cols) terminal_column = col;
 }
 
 static void screen_scroll(void) {
-    // Copy all rows up by one row in VGA text buffer
-    for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
+    if (fb_is_ready()) {
+        screen_fb_scroll();
+    } else {
+        // Copy all rows up by one row in VGA text buffer
+        for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
+            for (size_t x = 0; x < VGA_WIDTH; x++) {
+                const size_t src_index = (y + 1) * VGA_WIDTH + x;
+                const size_t dst_index = y * VGA_WIDTH + x;
+                vga_buffer[dst_index] = vga_buffer[src_index];
+            }
+        }
+
+        // Clear the last row
+        const size_t last_row_start = (VGA_HEIGHT - 1) * VGA_WIDTH;
+        uint16_t empty_char = vga_entry(' ', terminal_color);
         for (size_t x = 0; x < VGA_WIDTH; x++) {
-            const size_t src_index = (y + 1) * VGA_WIDTH + x;
-            const size_t dst_index = y * VGA_WIDTH + x;
-            vga_buffer[dst_index] = vga_buffer[src_index];
+            vga_buffer[last_row_start + x] = empty_char;
         }
     }
 
-    // Clear the last row
-    const size_t last_row_start = (VGA_HEIGHT - 1) * VGA_WIDTH;
-    uint16_t empty_char = vga_entry(' ', vga_entry_color(COLOR_LIGHT_GREY, COLOR_BLACK));
-    for (size_t x = 0; x < VGA_WIDTH; x++) {
-        vga_buffer[last_row_start + x] = empty_char;
-    }
-
-    screen_fb_scroll();
-    terminal_row = VGA_HEIGHT - 1;
+    terminal_row = screen_rows - 1;
 }
 
 
@@ -213,16 +246,23 @@ void screen_putc(char c) {
         if (terminal_column > 0) {
             terminal_column--;
             /* erase the character on screen */
-            const size_t idx = terminal_row * VGA_WIDTH + terminal_column;
-            vga_buffer[idx] = vga_entry(' ', terminal_color);
+            if (!fb_is_ready()) {
+                const size_t idx = terminal_row * VGA_WIDTH + terminal_column;
+                vga_buffer[idx] = vga_entry(' ', terminal_color);
+            }
             screen_fb_draw_char(terminal_column, terminal_row, ' ', terminal_color);
         }
         return;
     }
 
+    if (u == '\r') {
+        terminal_column = 0;
+        return;
+    }
+
     if (u == '\n') {
         terminal_column = 0;
-        if (++terminal_row == VGA_HEIGHT) {
+        if (++terminal_row >= screen_rows) {
             screen_scroll();
         }
         return;
@@ -231,22 +271,24 @@ void screen_putc(char c) {
     if (u == '\t') {
         // Tab stops every 4 columns
         terminal_column = (terminal_column + 4) & ~3;
-        if (terminal_column >= VGA_WIDTH) {
+        if (terminal_column >= screen_cols) {
             terminal_column = 0;
-            if (++terminal_row == VGA_HEIGHT) {
+            if (++terminal_row >= screen_rows) {
                 screen_scroll();
             }
         }
         return;
     }
 
-    const size_t index = terminal_row * VGA_WIDTH + terminal_column;
-    vga_buffer[index] = vga_entry(u, terminal_color);
+    if (!fb_is_ready()) {
+        const size_t index = terminal_row * VGA_WIDTH + terminal_column;
+        vga_buffer[index] = vga_entry(u, terminal_color);
+    }
     screen_fb_draw_char(terminal_column, terminal_row, u, terminal_color);
 
-    if (++terminal_column == VGA_WIDTH) {
+    if (++terminal_column >= screen_cols) {
         terminal_column = 0;
-        if (++terminal_row == VGA_HEIGHT) {
+        if (++terminal_row >= screen_rows) {
             screen_scroll();
         }
     }
