@@ -5,6 +5,7 @@
 #include <screen.h>
 #include <pci.h>
 #include <string.h>
+#include <iommu.h>
 
 /* Simple memset */
 static void simple_memset(void *dst, int val, size_t n) {
@@ -32,6 +33,10 @@ static void default_free_coherent(void *dev, size_t size, void *cpu_addr, uint64
 static int default_map_page(void *dev, uint64_t page, size_t offset, size_t size, int dir, uint64_t *dma_addr) {
     (void)dev; (void)dir; (void)offset;
     if (dma_addr) *dma_addr = page;
+    /* If VT-d IOMMU is enabled, map the IOVA → physical */
+    if (vt_d_is_enabled()) {
+        vt_d_map(page, page, size, VMM_FLAG_WRITE);
+    }
     return 0;
 }
 
@@ -259,8 +264,13 @@ struct scatterlist *sg_next(struct scatterlist *sg) {
     return sg + 1;
 }
 
-/* IOMMU stub implementation */
+/* IOMMU implementation — delegates to VT-d if available */
 int iommu_init(void) {
+    /* VT-d initialization is done in kernel_main after ACPI init */
+    if (vt_d_is_enabled()) {
+        screen_log("OK", COLOR_LIGHT_GREEN, "IOMMU: VT-d active with identity mapping");
+        return 0;
+    }
     screen_log("INFO", COLOR_LIGHT_CYAN, "IOMMU: Not present, using identity mapping");
     return 0;
 }
@@ -269,12 +279,18 @@ void iommu_exit(void) {
 }
 
 int iommu_map(void *dev, uint64_t iova, uint64_t paddr, size_t size, int prot) {
-    (void)dev; (void)iova; (void)paddr; (void)size; (void)prot;
-    return 0;  /* Identity mapping */
+    (void)dev;
+    if (vt_d_is_enabled()) {
+        return vt_d_map(iova, paddr, size, prot);
+    }
+    return 0;  /* Identity mapping when no IOMMU */
 }
 
 void iommu_unmap(void *dev, uint64_t iova, size_t size) {
-    (void)dev; (void)iova; (void)size;
+    (void)dev;
+    if (vt_d_is_enabled()) {
+        vt_d_unmap(iova, size);
+    }
 }
 
 int iommu_attach_device(void *dev) {

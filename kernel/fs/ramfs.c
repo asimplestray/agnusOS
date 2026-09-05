@@ -18,6 +18,7 @@
 #include <kheap.h>
 #include <screen.h>
 #include <stdint.h>
+#include <syscall.h>
 #include <stddef.h>
 
 /* -------------------------------------------------------------------------

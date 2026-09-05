@@ -12,6 +12,7 @@
 #include <screen.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <syscall.h>
 
 vfs_node_t *vfs_root = NULL;
 

@@ -39,6 +39,8 @@
 #include <dogin.h>
 #include <exec/exec.h>
 #include <dos/dos.h>
+#include <acpi.h>
+#include <iommu.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -146,6 +148,20 @@ void kernel_main(void) {
         pci_enum();
         serial_print("ApolloOS: pci_enum done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "PCI enumeration completa.");
+
+        /* Initialize ACPI and IOMMU (after PCI enum, before DMA-heavy ops) */
+        if (acpi_init(multiboot_info) == 0) {
+            acpi_iommu_unit_t iommu_units[ACPI_MAX_IOMMU_UNITS];
+            int count = acpi_get_iommu_units(iommu_units, ACPI_MAX_IOMMU_UNITS);
+            if (count > 0) {
+                /* Initialize first IOMMU unit found */
+                if (vt_d_init(iommu_units[0].mmio_base) == 0) {
+                    serial_print("ApolloOS: VT-d IOMMU enabled\n");
+                } else {
+                    serial_print("ApolloOS: VT-d init failed, using identity\n");
+                }
+            }
+        }
         
         /* Fase 1 Dev 2: GEM selftest (dev3_test-style probe) */
         drm_gem_test();

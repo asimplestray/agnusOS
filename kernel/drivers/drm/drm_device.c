@@ -17,6 +17,7 @@
 #include <screen.h>
 #include <string.h>
 #include <kheap.h>
+#include <syscall.h>
 
 /* Errno codes not in shared headers */
 #ifndef ENODEV

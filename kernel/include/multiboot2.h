@@ -15,6 +15,8 @@
 #define MULTIBOOT_TAG_TYPE_MMAP 6
 #define MULTIBOOT_TAG_TYPE_VBE 7
 #define MULTIBOOT_TAG_TYPE_FRAMEBUFFER 8
+#define MULTIBOOT_TAG_TYPE_ACPI_OLD 14
+#define MULTIBOOT_TAG_TYPE_ACPI_NEW 15
 
 // Memory map types
 #define MULTIBOOT_MEMORY_AVAILABLE 1
@@ -74,6 +76,13 @@ struct multiboot_tag_module {
     uint32_t mod_start;
     uint32_t mod_end;
     char cmdline[0];
+} __attribute__((packed));
+
+// ACPI RSDP tag (type 14 = ACPI 1.0, type 15 = ACPI 2.0+)
+struct multiboot_tag_acpi {
+    uint32_t type;
+    uint32_t size;
+    uint64_t rsdp;
 } __attribute__((packed));
 
 // Iterate multiboot tags

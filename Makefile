@@ -40,7 +40,8 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
       build/amdgpu_gfx.o build/amdgpu_fw.o build/thermal_monitor.o build/gpu_test_pattern.o \
       build/dc_core.o build/dce_resource.o build/dcn_resource.o \
-      build/dogin.o
+      build/dogin.o \
+      build/acpi.o build/iommu.o
 
 # Output
 ISO_OUT = apolloos.iso
@@ -448,6 +449,16 @@ build/dos_path.o: kernel/dos/path.c kernel/include/dos/path.h
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/dogin.o: kernel/dogin/dogin.c kernel/include/dogin.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/acpi.o: kernel/acpi/acpi.c kernel/include/acpi.h kernel/include/multiboot2.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/iommu.o: kernel/drivers/iommu.c kernel/include/iommu.h kernel/include/acpi.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
