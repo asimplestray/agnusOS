@@ -18,6 +18,7 @@
 #include <apollo_drv.h>
 #include <serial.h>
 #include <polaris.h>
+#include <bsdsocket.h>
 #include <drm/drm_gem.h>
 #include <rtc.h>
 #include <panic.h>
@@ -190,6 +191,9 @@ void kernel_main(void) {
     loopback_init();
     serial_print("ApolloOS: loopback_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Loopback interface (127.0.0.1) up.");
+
+    bsdsocket_init();
+    serial_print("ApolloOS: bsdsocket.library initialized\n");
 
     for (int bus = 0; bus < 256; bus++) {
         for (int dev = 0; dev < 32; dev++) {

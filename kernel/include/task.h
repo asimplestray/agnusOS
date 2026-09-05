@@ -8,6 +8,9 @@
 #include <wait.h>
 #include <vfs.h>
 #include <vmm.h>
+
+/* Forward declarations for bsdsocket.library */
+struct SocketBase;
 #include <idt.h>
 #include <serial.h>
 
@@ -156,6 +159,9 @@ typedef struct task_struct {
 
     /* TTY for this process */
     struct tty_struct *tty;
+
+    /* bsdsocket.library SocketBase (per-task, AmigaOS convention) */
+    struct SocketBase *socket_base;
 
     /* Process group for TTY job control */
     uint64_t pgid;

@@ -191,8 +191,17 @@ struct sockaddr_in {
 #define AOS_GetMsg         50   /* msgport_get */
 #define AOS_WaitPort       51   /* msgport_wait */
 #define AOS_ReplyMsg       52   /* msgport_reply */
+/* bsdsocket.library */
+#define AOS_Select         53
+#define AOS_SetSockOpt     54
+#define AOS_GetSockOpt     55
+#define AOS_GetSocketAddr  56
+#define AOS_SocketIOCtl    57
+#define AOS_SocketBaseTags 58
+#define AOS_SendTo         59
+#define AOS_RecvFrom       60
 
-#define NR_SYSCALLS         53
+#define NR_SYSCALLS         61
 
 /* ------------------------------------------------------------------ */
 /* Legacy compat aliases                                                */
@@ -275,6 +284,23 @@ int64_t aos_put_msg(int64_t id, const msg_t *msg, struct interrupt_frame *frame)
 int64_t aos_get_msg(int64_t id, msg_t *msg, int64_t *token, struct interrupt_frame *frame);
 int64_t aos_wait_port(int64_t id, int64_t timeout_ms, struct interrupt_frame *frame);
 int64_t aos_reply_msg(int64_t token, const msg_t *msg, struct interrupt_frame *frame);
+
+/* bsdsocket.library syscalls */
+int64_t aos_select(int64_t width, uint64_t readfds_ptr, uint64_t writefds_ptr,
+                   uint64_t exceptfds_ptr, uint64_t timeout_ptr, struct interrupt_frame *frame);
+int64_t aos_setsockopt(int64_t sockfd, int64_t level, int64_t optname,
+                       uint64_t optval_ptr, int64_t optlen, struct interrupt_frame *frame);
+int64_t aos_getsockopt(int64_t sockfd, int64_t level, int64_t optname,
+                       uint64_t optval_ptr, uint64_t optlen_ptr, struct interrupt_frame *frame);
+int64_t aos_get_socket_addr(int64_t sockfd, uint64_t name_ptr, uint64_t namelen_ptr,
+                            struct interrupt_frame *frame);
+int64_t aos_socketioctl(int64_t sockfd, int64_t request, uint64_t arg_ptr,
+                        struct interrupt_frame *frame);
+int64_t aos_socket_base_tags(uint64_t taglist_ptr, struct interrupt_frame *frame);
+int64_t aos_sendto(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
+                   uint64_t to_ptr, int64_t tolen, struct interrupt_frame *frame);
+int64_t aos_recvfrom(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
+                     uint64_t from_ptr, uint64_t fromlen_ptr, struct interrupt_frame *frame);
 
 void syscall_init(void);
 void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, struct interrupt_frame *frame);

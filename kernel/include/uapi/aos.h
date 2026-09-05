@@ -72,8 +72,17 @@
 #define AOS_GetMsg         50
 #define AOS_WaitPort       51
 #define AOS_ReplyMsg       52
+/* bsdsocket.library (bsdsocket-1.0) */
+#define AOS_Select         53   /* Select(fd_set) */
+#define AOS_SetSockOpt     54   /* SetSockOpt(level, optname, optval, optlen) */
+#define AOS_GetSockOpt     55   /* GetSockOpt(level, optname, optval, optlen) */
+#define AOS_GetSocketAddr  56   /* GetSocketAddr(sockfd, name, namelen) */
+#define AOS_SocketIOCtl    57   /* SocketIOCtl(sockfd, request, arg) */
+#define AOS_SocketBaseTags 58   /* SocketBaseTags(taglist) */
+#define AOS_SendTo         59   /* SendTo(sockfd, buf, len, flags, to, tolen) */
+#define AOS_RecvFrom       60   /* RecvFrom(sockfd, buf, len, flags, from, fromlen) */
 
-#define AOS_NR_SYSCALLS    53
+#define AOS_NR_SYSCALLS    61
 
 /* Compat aliases — código antigo ainda compila com SYS_* */
 #define SYS_EXIT        AOS_Exit

@@ -17,6 +17,7 @@
 #include <ata.h>
 #include <tty.h>
 #include <string.h>
+#include <bsdsocket.h>
 
 /* ------------------------------------------------------------------ */
 /* Dispatch table                                                       */
@@ -78,6 +79,15 @@ void syscall_init(void) {
     syscall_table[AOS_GetMsg]       = (void *)aos_get_msg;
     syscall_table[AOS_WaitPort]     = (void *)aos_wait_port;
     syscall_table[AOS_ReplyMsg]     = (void *)aos_reply_msg;
+    /* bsdsocket.library */
+    syscall_table[AOS_Select]       = (void *)aos_select;
+    syscall_table[AOS_SetSockOpt]   = (void *)aos_setsockopt;
+    syscall_table[AOS_GetSockOpt]   = (void *)aos_getsockopt;
+    syscall_table[AOS_GetSocketAddr]= (void *)aos_get_socket_addr;
+    syscall_table[AOS_SocketIOCtl]  = (void *)aos_socketioctl;
+    syscall_table[AOS_SocketBaseTags]= (void *)aos_socket_base_tags;
+    syscall_table[AOS_SendTo]       = (void *)aos_sendto;
+    syscall_table[AOS_RecvFrom]     = (void *)aos_recvfrom;
 }
 
 void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, struct interrupt_frame *frame) {
@@ -645,83 +655,98 @@ int64_t aos_loadseg(const char *path, struct interrupt_frame *frame) {
 }
 
 /* ================================================================== */
-/* Network — kept as-is (already kernel-level, not POSIX)              */
+/* bsdsocket.library — AmigaOS-style BSD socket API                     */
 /* ================================================================== */
 
 #include <net/net.h>
 
 int64_t aos_socket(int domain, int type, int protocol, struct interrupt_frame *frame) {
     (void)frame;
-    if (domain != AF_INET) return -AOS_ERR_BAD_ARGUMENT;
-    if (type != SOCK_DGRAM && type != SOCK_STREAM) return -AOS_ERR_BAD_ARGUMENT;
-    struct udp_sock *sock = udp_socket(domain, type, protocol);
-    if (!sock) return -AOS_ERR_NO_MEMORY;
-    /* Store in task's file table (legacy compat) */
-    if (current && current->files) {
-        for (int i = 3; i < 256; i++) {
-            if (!current->files->fd_array[i]) {
-                current->files->fd_array[i] = (void *)sock;
-                return (int64_t)i;
-            }
-        }
-    }
-    return -AOS_ERR_NO_MEMORY;
+    return (int64_t)Socket(domain, type, protocol);
 }
 
 int64_t aos_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct interrupt_frame *frame) {
     (void)frame;
-    if (sockfd < 0 || sockfd >= 256) return -AOS_ERR_BAD_ARGUMENT;
-    if (!addr || addrlen < (int)sizeof(struct sockaddr_in)) return -AOS_ERR_BAD_ARGUMENT;
-    struct udp_sock *sock = (struct udp_sock *)current->files->fd_array[sockfd];
-    if (!sock) return -AOS_ERR_BAD_ARGUMENT;
-    struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-    if (sin->sin_family != AF_INET) return -AOS_ERR_BAD_ARGUMENT;
-    sock->dev = netif_default;
-    return udp_bind(sock, (const uint8_t *)&sin->sin_addr, ntohs(sin->sin_port));
+    return (int64_t)Bind(sockfd, addr, addrlen);
 }
 
 int64_t aos_send(int sockfd, const void *buf, int len, int flags, const struct sockaddr *dest_addr, int addrlen, struct interrupt_frame *frame) {
-    (void)frame; (void)flags;
-    if (sockfd < 0 || sockfd >= 256) return -AOS_ERR_BAD_ARGUMENT;
-    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
-    if (!dest_addr || addrlen < (int)sizeof(struct sockaddr_in)) return -AOS_ERR_BAD_ARGUMENT;
-    struct udp_sock *sock = (struct udp_sock *)current->files->fd_array[sockfd];
-    if (!sock) return -AOS_ERR_BAD_ARGUMENT;
-    struct sockaddr_in *sin = (struct sockaddr_in *)dest_addr;
-    if (sin->sin_family != AF_INET) return -AOS_ERR_BAD_ARGUMENT;
-    return udp_sendto(sock, buf, len, (const uint8_t *)&sin->sin_addr, ntohs(sin->sin_port));
+    (void)frame; (void)addrlen;
+    /* Send() requires connected socket; SendTo() uses dest_addr.
+     * We route to SendTo when dest_addr is non-NULL for backward compat. */
+    if (dest_addr)
+        return (int64_t)SendTo(sockfd, buf, len, flags, dest_addr, addrlen);
+    return (int64_t)Send(sockfd, buf, len, flags);
 }
 
 int64_t aos_recv(int sockfd, void *buf, int len, int flags, struct sockaddr *src_addr, int *addrlen, struct interrupt_frame *frame) {
-    (void)frame; (void)flags;
-    if (sockfd < 0 || sockfd >= 256) return -AOS_ERR_BAD_ARGUMENT;
-    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
-    struct udp_sock *sock = (struct udp_sock *)current->files->fd_array[sockfd];
-    if (!sock) return -AOS_ERR_BAD_ARGUMENT;
-    uint8_t src_ip[4];
-    uint16_t src_port;
-    int ret = udp_recvfrom(sock, buf, len, src_ip, &src_port);
-    if (ret > 0 && src_addr && addrlen && *addrlen >= (int)sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)src_addr;
-        sin->sin_family = AF_INET;
-        sin->sin_port = htons(src_port);
-        sin->sin_addr = *(uint32_t *)src_ip;
-        memset(sin->sin_zero, 0, 8);
-        *addrlen = sizeof(struct sockaddr_in);
-    }
-    return ret;
+    (void)frame;
+    if (src_addr && addrlen)
+        return (int64_t)RecvFrom(sockfd, buf, len, flags, src_addr, addrlen);
+    return (int64_t)Recv(sockfd, buf, len, flags);
 }
 
 int64_t aos_close_socket(int64_t fd, struct interrupt_frame *frame) {
     (void)frame;
-    if (fd < 0 || fd >= 256) return -AOS_ERR_BAD_ARGUMENT;
-    if (!current || !current->files) return -AOS_ERR_BAD_ARGUMENT;
-    void *f = current->files->fd_array[fd];
-    if (!f) return -AOS_ERR_BAD_ARGUMENT;
-    struct udp_sock *sock = (struct udp_sock *)f;
-    if (sock->bound) udp_close(sock);
-    current->files->fd_array[fd] = NULL;
-    return 0;
+    return (int64_t)CloseSocket((int)fd);
+}
+
+int64_t aos_select(int64_t width, uint64_t readfds_ptr, uint64_t writefds_ptr,
+                   uint64_t exceptfds_ptr, uint64_t timeout_ptr, struct interrupt_frame *frame) {
+    (void)frame;
+    fd_set *rfds = (fd_set *)readfds_ptr;
+    fd_set *wfds = (fd_set *)writefds_ptr;
+    fd_set *efds = (fd_set *)exceptfds_ptr;
+    struct timeval *tv = (struct timeval *)timeout_ptr;
+    return (int64_t)Select((int)width, rfds, wfds, efds, tv);
+}
+
+int64_t aos_setsockopt(int64_t sockfd, int64_t level, int64_t optname,
+                       uint64_t optval_ptr, int64_t optlen, struct interrupt_frame *frame) {
+    (void)frame;
+    return (int64_t)SetSockOpt((int)sockfd, (int)level, (int)optname,
+                               (const void *)optval_ptr, (int)optlen);
+}
+
+int64_t aos_getsockopt(int64_t sockfd, int64_t level, int64_t optname,
+                       uint64_t optval_ptr, uint64_t optlen_ptr, struct interrupt_frame *frame) {
+    (void)frame;
+    int *optlen = (int *)optlen_ptr;
+    return (int64_t)GetSockOpt((int)sockfd, (int)level, (int)optname,
+                               (void *)optval_ptr, optlen);
+}
+
+int64_t aos_get_socket_addr(int64_t sockfd, uint64_t name_ptr, uint64_t namelen_ptr,
+                            struct interrupt_frame *frame) {
+    (void)frame;
+    int *namelen = (int *)namelen_ptr;
+    return (int64_t)GetSocketAddr((int)sockfd, (struct sockaddr *)name_ptr, namelen);
+}
+
+int64_t aos_socketioctl(int64_t sockfd, int64_t request, uint64_t arg_ptr,
+                        struct interrupt_frame *frame) {
+    (void)frame;
+    return (int64_t)SocketIOCtl((int)sockfd, (int)request, (void *)arg_ptr);
+}
+
+int64_t aos_socket_base_tags(uint64_t taglist_ptr, struct interrupt_frame *frame) {
+    (void)frame;
+    return (int64_t)SocketBaseTags((struct TagItem *)taglist_ptr);
+}
+
+int64_t aos_sendto(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
+                   uint64_t to_ptr, int64_t tolen, struct interrupt_frame *frame) {
+    (void)frame;
+    return (int64_t)SendTo((int)sockfd, (const void *)buf_ptr, (int)len, (int)flags,
+                           (const struct sockaddr *)to_ptr, (int)tolen);
+}
+
+int64_t aos_recvfrom(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
+                     uint64_t from_ptr, uint64_t fromlen_ptr, struct interrupt_frame *frame) {
+    (void)frame;
+    int *fromlen = (int *)fromlen_ptr;
+    return (int64_t)RecvFrom((int)sockfd, (void *)buf_ptr, (int)len, (int)flags,
+                             (struct sockaddr *)from_ptr, fromlen);
 }
 
 /* ================================================================== */

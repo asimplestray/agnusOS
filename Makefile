@@ -29,7 +29,7 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/procfs.o build/devfs.o build/bcache.o \
       build/ata.o build/fat32.o build/firmware.o build/workqueue.o build/dma.o build/apollo_drv.o build/polaris.o build/serial.o \
       build/rtc.o build/panic.o build/drm_device.o \
-      build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o \
+      build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o build/bsdsocket.o \
       build/drm_gem.o \
       build/assign.o build/msgport.o \
       build/exec.o build/exec_signal.o build/exec_library.o \
@@ -238,6 +238,11 @@ build/udp.o: kernel/net/udp.c
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/loopback.o: kernel/net/loopback.c
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/bsdsocket.o: kernel/net/bsdsocket.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

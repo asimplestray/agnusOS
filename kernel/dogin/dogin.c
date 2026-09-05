@@ -15,6 +15,8 @@
 #include <rtc.h>
 #include <framebuffer.h>
 #include <io.h>
+#include <bsdsocket.h>
+#include <net/net.h>
 
 static char cwd_disp[ASSIGN_MAX_PATH] = "Work:";
 
@@ -105,6 +107,7 @@ static int cmd_which(const char *args);
 static int cmd_path(const char *args);
 static int cmd_set(const char *args);
 static int cmd_unset(const char *args);
+static int cmd_netinfo(const char *args);
 
 typedef struct { const char *name; int (*fn)(const char*); const char *help; } cmd_t;
 static cmd_t cmds[] = {
@@ -132,6 +135,7 @@ static cmd_t cmds[] = {
     {"Path",     cmd_path,     "Path [dir] - mostra/adiciona path de busca"},
     {"Set",      cmd_set,      "Set <var> <valor> - define variável de ambiente"},
     {"Unset",    cmd_unset,    "Unset <var> - remove variável"},
+    {"NetInfo",  cmd_netinfo,  "NetInfo - info da rede (bsdsocket.library)"},
     {NULL, NULL, NULL}
 };
 
@@ -860,6 +864,71 @@ static int cmd_unset(const char *args){
     }
     dogin_println("Unset: não achei");
     return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* NetInfo — show network interfaces (AmigaOS bsdsocket.library)        */
+/* ------------------------------------------------------------------ */
+
+static int cmd_netinfo(const char *args) {
+    (void)args;
+    dogin_println("=== bsdsocket.library v1.0 ===");
+    dogin_println("");
+
+    /* Show all interfaces */
+    for (struct netif *n = netif_list; n; n = n->next) {
+        char line[128];
+        char ip[16], gw[16], mask[16];
+
+        snprintf(ip, sizeof(ip), "%d.%d.%d.%d",
+                 n->ip[0], n->ip[1], n->ip[2], n->ip[3]);
+        snprintf(gw, sizeof(gw), "%d.%d.%d.%d",
+                 n->gw[0], n->gw[1], n->gw[2], n->gw[3]);
+        snprintf(mask, sizeof(mask), "%d.%d.%d.%d",
+                 n->netmask[0], n->netmask[1], n->netmask[2], n->netmask[3]);
+
+        snprintf(line, sizeof(line), "  %s: %s  GW:%s  Mask:%s  MTU:%d  %s",
+                 n->name, ip, gw, mask, (int)n->mtu,
+                 (n->flags & NETIF_FLAG_UP) ? "UP" : "DOWN");
+        dogin_println(line);
+    }
+
+    /* Show socket count for current task */
+    if (current && current->socket_base) {
+        struct SocketBase *sb = current->socket_base;
+        char line[64];
+        snprintf(line, sizeof(line), "  Sockets abertos: %d/%d",
+                 (int)sb->sb_SocketCount, BSDSOCKET_MAX_FDS);
+        dogin_println(line);
+
+        /* List active sockets */
+        for (int i = 0; i < BSDSOCKET_MAX_FDS; i++) {
+            if (sb->sb_Socks[i].in_use) {
+                struct bsd_sock *bs = &sb->sb_Socks[i];
+                char sline[128];
+                char laddr[16], raddr[16];
+                snprintf(laddr, sizeof(laddr), "%d.%d.%d.%d",
+                         bs->local_addr[0], bs->local_addr[1],
+                         bs->local_addr[2], bs->local_addr[3]);
+                snprintf(raddr, sizeof(raddr), "%d.%d.%d.%d",
+                         bs->remote_addr[0], bs->remote_addr[1],
+                         bs->remote_addr[2], bs->remote_addr[3]);
+                snprintf(sline, sizeof(sline),
+                         "    fd:%d  %s:%d -> %s:%d  %s",
+                         i, laddr, ntohs(bs->local_port),
+                         raddr, ntohs(bs->remote_port),
+                         bs->connected ? "connected" : "bound");
+                dogin_println(sline);
+            }
+        }
+    } else {
+        dogin_println("  Nenhum socket aberto nesta task.");
+    }
+
+    dogin_println("");
+    dogin_println("Comandos: Socket(), Bind(), Send(), Recv(), CloseSocket()");
+    dogin_println("          Select(), IoErr(), SocketBaseTags()");
+    return 0;
 }
 
 void dogin_init(void){
