@@ -10,6 +10,9 @@ static uint16_t* const vga_buffer = (uint16_t*)VGA_ADDRESS;
 static size_t terminal_row;
 static size_t terminal_column;
 static uint8_t terminal_color;
+static uint8_t utf8_state = 0;
+static uint8_t utf8_lead = 0;
+static uint8_t utf8_skip = 0;
 
 static const uint32_t vga_to_rgb32[16] = {
     0x00000000, // Black
@@ -110,6 +113,9 @@ void screen_clear(vga_color_t bg) {
     }
     terminal_row = 0;
     terminal_column = 0;
+    utf8_state = 0;
+    utf8_lead = 0;
+    utf8_skip = 0;
 }
 
 void screen_set_color(vga_color_t fg, vga_color_t bg) {
@@ -142,17 +148,27 @@ static void screen_scroll(void) {
     terminal_row = VGA_HEIGHT - 1;
 }
 
-static uint8_t utf8_state = 0;
-static uint8_t utf8_lead = 0;
 
 void screen_putc(char c) {
     uint8_t u = (uint8_t)c;
 
+    // Skip remaining bytes of an unsupported multi-byte UTF-8 sequence
+    if (utf8_skip) {
+        if ((u & 0xC0) == 0x80) { utf8_skip--; return; }
+        utf8_skip = 0;
+    }
+
     // Handle UTF-8 multi-byte sequences on-the-fly
     if (utf8_state == 0) {
-        if (u == 0xC3 || u == 0xC2) {
+        if (u >= 0xC2 && u <= 0xDF) {
             utf8_state = 1;
             utf8_lead = u;
+            return;
+        } else if (u >= 0xE0 && u <= 0xEF) {
+            utf8_skip = 2;
+            return;
+        } else if (u >= 0xF0 && u <= 0xF7) {
+            utf8_skip = 3;
             return;
         }
     } else if (utf8_state == 1) {

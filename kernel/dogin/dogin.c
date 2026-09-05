@@ -356,18 +356,18 @@ int dogin_exec_line(const char *line){
     }
     dogin_print("dogin: comando desconhecido '");
     dogin_print(cmd);
-    dogin_println("' — digite Help");
+    dogin_println("' -- digite Help");
     return -1;
 }
 
 int dogin_exec_file(const char *path){
     BPTR fh = dos_open(path, MODE_OLDFILE);
-    if(!fh){ dogin_print("Execute: não achei "); dogin_println(path); return -1; }
+    if(!fh){ dogin_print("Execute: nao achei "); dogin_println(path); return -1; }
 
     file_info_block_t fib;
     if(dos_examine(fh, &fib)==0 && fib.fib_DirEntryType > 0){
         dos_close(fh);
-        dogin_println("Execute: é diretório");
+        dogin_println("Execute: e diretorio");
         return -1;
     }
     dos_close(fh);
@@ -378,7 +378,7 @@ int dogin_exec_file(const char *path){
 
     dos_examine(fh, &fib);
     int32_t len = fib.fib_Size;
-    if(len <= 0 || len > 8192){ dos_close(fh); dogin_println("Execute: tamanho inválido"); return -1; }
+    if(len <= 0 || len > 8192){ dos_close(fh); dogin_println("Execute: tamanho invalido"); return -1; }
 
     char *data = kmalloc((uint32_t)len + 1);
     if(!data){ dos_close(fh); dogin_println("Execute: OOM"); return -1; }
@@ -449,10 +449,10 @@ int dogin_exec_file(const char *path){
 static int cmd_list(const char *args){
     const char *path = args[0]?args:"Work:";
     BPTR lock = dos_lock(path, ACCESS_READ);
-    if(!lock){ dogin_print("List: não achei "); dogin_println(path); return -1; }
+    if(!lock){ dogin_print("List: nao achei "); dogin_println(path); return -1; }
     file_info_block_t fib;
     if(dos_examine(lock, &fib)!=0){ dos_un_lock(lock); dogin_println("List: examine falhou"); return -1; }
-    if(fib.fib_DirEntryType <= 0){ dos_un_lock(lock); dogin_println("List: não é diretório"); return -1; }
+    if(fib.fib_DirEntryType <= 0){ dos_un_lock(lock); dogin_println("List: nao e diretorio"); return -1; }
     dogin_print("List "); dogin_println(path);
     while(dos_ex_next(lock, &fib)==0){
         const char *type = (fib.fib_DirEntryType > 0) ? "<Dir>" : "     ";
@@ -466,11 +466,11 @@ static int cmd_cd(const char *args){
     if(!args[0]){ dogin_println(cwd_disp); return 0; }
     /* Validate the path exists */
     BPTR lock = dos_lock(args, ACCESS_READ);
-    if(!lock){ dogin_print("Cd: não achei "); dogin_println(args); return -1; }
+    if(!lock){ dogin_print("Cd: nao achei "); dogin_println(args); return -1; }
     file_info_block_t fib;
     if(dos_examine(lock, &fib)!=0 || fib.fib_DirEntryType <= 0){
         dos_un_lock(lock);
-        dogin_println("Cd: não é diretório");
+        dogin_println("Cd: nao e diretorio");
         return -1;
     }
     dos_un_lock(lock);
@@ -511,7 +511,7 @@ static int cmd_makedir(const char *args){
     if(!args[0]){ dogin_println("MakeDir: falta nome"); return -1; }
     int32_t rc = dos_create_dir(args);
     if(rc==0) dogin_println("MakeDir: ok");
-    else dogin_println("MakeDir: falhou (já existe?)");
+    else dogin_println("MakeDir: falhou (ja existe?)");
     return rc;
 }
 static int cmd_delete(const char *args){
@@ -532,12 +532,12 @@ static int cmd_copy(const char *args){
     if(!src[0]||!dst[0]){ dogin_println("Copy: uso Copy <src> <dst>"); return -1; }
 
     BPTR sfh = dos_open(src, MODE_OLDFILE);
-    if(!sfh){ dogin_print("Copy: src não achei "); dogin_println(src); return -1; }
+    if(!sfh){ dogin_print("Copy: src nao achei "); dogin_println(src); return -1; }
 
     file_info_block_t sfib;
     if(dos_examine(sfh, &sfib)==0 && sfib.fib_DirEntryType > 0){
         dos_close(sfh);
-        dogin_println("Copy: src é dir (Use MakeDir)");
+        dogin_println("Copy: src e dir (Use MakeDir)");
         return -1;
     }
 
@@ -565,9 +565,9 @@ static int cmd_copy(const char *args){
         dos_close(dfh);
         dogin_println("Copy: sobrescrito");
     } else {
-        dogin_print("Copy: dst não existe, criando "); dogin_println(dst);
+        dogin_print("Copy: dst nao existe, criando "); dogin_println(dst);
         /* TODO: MODE_NEWFILE + ramfs file creation */
-        dogin_println("Copy: criação de arquivo novo ainda não implementada — use Type/Copy sobre arquivo existente");
+        dogin_println("Copy: criacao de arquivo novo ainda nao implementada -- use Type/Copy sobre arquivo existente");
         kfree(buf);
         return -1;
     }
@@ -591,11 +591,11 @@ static int cmd_rename(const char *args){
 static int cmd_type(const char *args){
     if(!args[0]){ dogin_println("Type: falta arquivo"); return -1; }
     BPTR fh = dos_open(args, MODE_OLDFILE);
-    if(!fh){ dogin_print("Type: não achei "); dogin_println(args); return -1; }
+    if(!fh){ dogin_print("Type: nao achei "); dogin_println(args); return -1; }
     file_info_block_t fib;
     if(dos_examine(fh, &fib)==0 && fib.fib_DirEntryType > 0){
         dos_close(fh);
-        dogin_println("Type: é diretório, use List");
+        dogin_println("Type: e diretorio, use List");
         return -1;
     }
     /* Re-open — dos_examine consumed the handle position */
@@ -631,7 +631,7 @@ static int cmd_assign(const char *args){
         // get
         char out[ASSIGN_MAX_PATH];
         if(assign_lookup(name, out, sizeof out)==0){ dogin_print(name); dogin_print(": -> "); dogin_println(out); }
-        else dogin_println("Assign: não achei");
+        else dogin_println("Assign: nao achei");
         return 0;
     }
     // set
@@ -681,7 +681,7 @@ static int cmd_avail(const char *args){
 static int cmd_info(const char *args){
     const char *vol = args[0]?args:"Work:";
     BPTR lock = dos_lock(vol, ACCESS_READ);
-    if(!lock){ dogin_print("Info: não achei "); dogin_println(vol); return -1; }
+    if(!lock){ dogin_print("Info: nao achei "); dogin_println(vol); return -1; }
     file_info_block_t fib;
     if(dos_examine(lock, &fib)!=0){ dos_un_lock(lock); dogin_println("Info: examine falhou"); return -1; }
 
@@ -707,16 +707,16 @@ static int cmd_info(const char *args){
 }
 static int cmd_version(const char *args){
     (void)args;
-    dogin_println("dogin 0.1 — AmigaDOS-like shell para ApolloOS");
+    dogin_println("dogin 0.1 -- AmigaDOS-like shell para ApolloOS");
     dogin_println("  kernel v0.2-Alpha  exec 0.1  dos 0.1  intuition 0.1");
     dogin_println("  AOS_53 traps  Assign/MsgPort  Limine BIOS+UEFI");
-    dogin_println("  .in scripts com ';' comentário");
+    dogin_println("  .in scripts com ';' comentario");
     return 0;
 }
 static int cmd_help(const char *args){
     if(args[0]){
         for(int i=0;cmds[i].name;i++) if(strcaseeq(args, cmds[i].name)){ dogin_print(cmds[i].name); dogin_print(" - "); dogin_println(cmds[i].help); return 0; }
-        dogin_print("Help: não achei "); dogin_println(args);
+        dogin_print("Help: nao achei "); dogin_println(args);
         return -1;
     }
     dogin_println("Comandos Amiga-like:");
@@ -725,14 +725,14 @@ static int cmd_help(const char *args){
     dogin_println("    If <cmd> Then ... [Else ...] EndIf");
     dogin_println("    While <cmd> Do ... EndWhile   (scripts .in)");
     dogin_println("    Repeat ... Until <cmd>         (scripts .in)");
-    dogin_println("  ; comentário  e  Work:Assigns  e  .in scripts");
+    dogin_println("  ; comentario  e  Work:Assigns  e  .in scripts");
     return 0;
 }
 static int cmd_echo(const char *args){ dogin_println(args); return 0; }
 static int cmd_run(const char *args){
     if(!args[0]){ dogin_println("Run: falta ELF (ex: Run C:hello)"); return -1; }
     BPTR fh = dos_open(args, MODE_OLDFILE);
-    if(!fh){ dogin_print("Run: não achei "); dogin_println(args); return -1; }
+    if(!fh){ dogin_print("Run: nao achei "); dogin_println(args); return -1; }
     dos_close(fh);
     dogin_print("Run: LoadSeg "); dogin_println(args);
     dogin_println("Run: task_create_user not implemented yet");
@@ -790,7 +790,7 @@ static int cmd_which(const char *args){
         dogin_print("Which: "); dogin_print(path); dogin_println(" (encontrado)");
         return 0;
     }
-    dogin_print("Which: não achei '"); dogin_print(args); dogin_println("' em C:");
+    dogin_print("Which: nao achei '"); dogin_print(args); dogin_println("' em C:");
     return -1;
 }
 
@@ -821,7 +821,7 @@ static env_var_t env_vars[ENV_MAX];
 static int env_count = 0;
 
 static int cmd_set(const char *args){
-    if(!args[0]){ dogin_println("Set: falta variável"); return -1; }
+    if(!args[0]){ dogin_println("Set: falta variavel"); return -1; }
     char key[ENV_KEYLEN] = {0};
     const char *p = args;
     int ki = 0;
@@ -844,14 +844,14 @@ static int cmd_set(const char *args){
         env_count++;
         dogin_print(key); dogin_print("="); dogin_println(val);
     } else {
-        dogin_println("Set: muitas variáveis");
+        dogin_println("Set: muitas variaveis");
         return -1;
     }
     return 0;
 }
 
 static int cmd_unset(const char *args){
-    if(!args[0]){ dogin_println("Unset: falta variável"); return -1; }
+    if(!args[0]){ dogin_println("Unset: falta variavel"); return -1; }
     for(int i = 0; i < env_count; i++){
         if(strcmp(env_vars[i].key, args) == 0){
             /* Shift down */
@@ -862,7 +862,7 @@ static int cmd_unset(const char *args){
             return 0;
         }
     }
-    dogin_println("Unset: não achei");
+    dogin_println("Unset: nao achei");
     return -1;
 }
 
@@ -935,7 +935,7 @@ void dogin_init(void){
     screen_clear(COLOR_BLACK);
     screen_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
     dogin_println("dogin: Workbench-like shell 0.1 (AmigaDOS)");
-    dogin_println("  digite Help para comandos, ; para comentário, Work: para assigns");
+    dogin_println("  digite Help para comandos, ; para comentario, Work: para assigns");
     dogin_println("  If/Then/Else/EndIf, While/EndWhile, Repeat/Until");
     dogin_print("\n");
 }
