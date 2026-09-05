@@ -126,3 +126,26 @@ int arp_resolve(struct netif *dev, const uint8_t *ip, uint8_t *mac) {
     
     return arp_request(dev, ip);
 }
+
+/* Handle incoming ARP packet from the wire */
+void arp_input(struct netif *dev, void *data, uint32_t len) {
+    if (!dev || !data || len < sizeof(struct arp_hdr)) return;
+
+    struct arp_hdr *arph = (struct arp_hdr *)data;
+
+    /* Only handle Ethernet/IP ARP */
+    if (ntohs(arph->htype) != ARP_HTYPE_ETH ||
+        ntohs(arph->ptype) != ETH_P_IP ||
+        arph->hlen != ETH_ALEN || arph->plen != 4)
+        return;
+
+    /* Learn sender's mapping from any ARP packet */
+    arp_update(arph->spa, arph->sha);
+
+    /* If it's an ARP request for our IP, send a reply */
+    if (ntohs(arph->op) == ARP_OP_REQUEST) {
+        if (memcmp(arph->tpa, dev->ip, 4) == 0) {
+            arp_reply(dev, arph);
+        }
+    }
+}

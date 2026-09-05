@@ -205,6 +205,7 @@ void kernel_main(void) {
                             netif->ip[0] = 10; netif->ip[1] = 0; netif->ip[2] = 2; netif->ip[3] = 15;
                             netif->netmask[0] = 255; netif->netmask[1] = 255; netif->netmask[2] = 255; netif->netmask[3] = 0;
                             netif->xmit = rtl8139_xmit;
+                            netif->rx_handler = eth_input;
                             rtl8139_set_rx_handler(&rtl_dev, netif);
                             netif_register(netif);
                             netif_default = netif;

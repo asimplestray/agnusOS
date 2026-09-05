@@ -148,6 +148,9 @@ int arp_request(struct netif *dev, const uint8_t *target_ip);
 void arp_reply(struct netif *dev, const struct arp_hdr *arph);
 int arp_resolve(struct netif *dev, const uint8_t *ip, uint8_t *mac);
 void arp_update(const uint8_t *sender_ip, const uint8_t *sender_mac);
+void arp_input(struct netif *dev, void *data, uint32_t len);
+
+void eth_input(struct netif *dev, void *data, uint32_t len);
 
 void ip_init(void);
 int ip_output(struct netif *dev, struct net_pkt *pkt, uint8_t proto, const uint8_t *daddr);

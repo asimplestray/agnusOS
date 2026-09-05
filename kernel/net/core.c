@@ -155,3 +155,35 @@ uint16_t net_ip_checksum(const struct ip_hdr *iph) {
     ((struct ip_hdr *)iph)->check = check;
     return calc;
 }
+
+/* Ethernet frame receive handler — called by NIC drivers (rtl8139 etc.) */
+void eth_input(struct netif *dev, void *data, uint32_t len) {
+    if (!dev || !data || len < ETH_HLEN) return;
+
+    struct eth_hdr *eth = (struct eth_hdr *)data;
+    uint16_t type = ntohs(eth->type);
+
+    /* Advance data pointer past Ethernet header */
+    void *payload = (uint8_t *)data + ETH_HLEN;
+    uint32_t payload_len = len - ETH_HLEN;
+
+    switch (type) {
+        case ETH_P_IP: {
+            /* Allocate a packet with ETH_HLEN prefix so ip_input can
+             * operate on the raw frame (ip_output writes ETH header) */
+            struct net_pkt *pkt = pkt_alloc(payload_len);
+            if (!pkt) return;
+            memcpy(pkt->data, payload, payload_len);
+            pkt->len = payload_len;
+            pkt->dev = dev;
+            ip_input(dev, pkt);
+            break;
+        }
+        case ETH_P_ARP:
+            arp_input(dev, payload, payload_len);
+            break;
+        default:
+            /* Unknown EtherType — drop silently */
+            break;
+    }
+}
