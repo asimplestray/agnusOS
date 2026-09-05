@@ -88,4 +88,8 @@ void pci_msix_unmask_vector(uint8_t bus, uint8_t dev, uint8_t func, int vector);
 int pci_iommu_map(uint8_t bus, uint8_t dev, uint8_t func, uint64_t iova, uint64_t paddr, size_t size);
 void pci_iommu_unmap(uint8_t bus, uint8_t dev, uint8_t func, uint64_t iova, size_t size);
 
+/* MSI-X vector allocation (from pool 48..255) */
+int pci_msix_alloc_vectors(int count);
+void pci_msix_free_vectors(int * vectors, int count);
+
 #endif

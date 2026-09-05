@@ -2,6 +2,8 @@
 #define IDT_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include <workqueue.h>
 
 // IDT entry structure (16 bytes on x86_64)
 struct idt_entry {
@@ -53,5 +55,10 @@ void interrupts_register_handler(uint8_t num, interrupt_handler_t handler);
 // Dynamic IRQ registration with threading support
 int request_irq(uint8_t irq, interrupt_handler_t handler, bool threaded, const char *name, void *dev_id);
 void free_irq(uint8_t irq, void *dev_id);
+
+// MSI-X vector registration (vectors 48..255, for APIC-delivered device interrupts)
+int request_msi_irq(uint8_t vector, interrupt_handler_t handler, bool threaded,
+                     const char *name, void *dev_id);
+void free_msi_irq(uint8_t vector, void *dev_id);
 
 #endif

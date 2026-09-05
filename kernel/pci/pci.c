@@ -4,6 +4,7 @@
 #include <vmm.h>
 #include <kheap.h>
 #include <dma.h>
+#include <spinlock.h>
 
 static uint32_t pci_config_addr(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset) {
     return (uint32_t)((bus << 16) | (dev << 11) | (func << 8) | (offset & 0xFC) | 0x80000000);
@@ -320,6 +321,62 @@ int pci_iommu_map(uint8_t bus, uint8_t dev, uint8_t func, uint64_t iova, uint64_
 void pci_iommu_unmap(uint8_t bus, uint8_t dev, uint8_t func, uint64_t iova, size_t size) {
     (void)bus; (void)dev; (void)func;
     iommu_unmap(NULL, iova, size);
+}
+
+/* ================================================================== */
+/* MSI-X Vector Allocation (pool: vectors 48..255)                     */
+/* ================================================================== */
+
+#define MSI_VECTOR_BASE  48
+#define MSI_VECTOR_MAX  255
+#define MSI_VECTOR_COUNT (MSI_VECTOR_MAX - MSI_VECTOR_BASE + 1)
+
+static uint8_t msi_vector_pool[MSI_VECTOR_COUNT]; /* 0 = free, 1 = allocated */
+static spinlock_irq_t msi_alloc_lock = { SPINLOCK_INIT, 0 };
+
+int pci_msix_alloc_vectors(int count) {
+    if (count <= 0 || count > MSI_VECTOR_COUNT) return -1;
+
+    unsigned long flags;
+    spin_lock_irqsave(&msi_alloc_lock, &flags);
+
+    /* Find `count` contiguous free vectors */
+    int run_start = -1;
+    int run_len = 0;
+    for (int i = 0; i < MSI_VECTOR_COUNT; i++) {
+        if (msi_vector_pool[i] == 0) {
+            if (run_start < 0) run_start = i;
+            run_len++;
+            if (run_len == count) {
+                /* Allocate this run */
+                for (int j = run_start; j < run_start + count; j++) {
+                    msi_vector_pool[j] = 1;
+                }
+                spin_unlock_irqrestore(&msi_alloc_lock, flags);
+                return MSI_VECTOR_BASE + run_start; /* Return base vector number */
+            }
+        } else {
+            run_start = -1;
+            run_len = 0;
+        }
+    }
+
+    spin_unlock_irqrestore(&msi_alloc_lock, flags);
+    return -1; /* Not enough contiguous vectors */
+}
+
+void pci_msix_free_vectors(int *vectors, int count) {
+    if (!vectors || count <= 0) return;
+
+    unsigned long flags;
+    spin_lock_irqsave(&msi_alloc_lock, &flags);
+    for (int i = 0; i < count; i++) {
+        int v = vectors[i] - MSI_VECTOR_BASE;
+        if (v >= 0 && v < MSI_VECTOR_COUNT) {
+            msi_vector_pool[v] = 0;
+        }
+    }
+    spin_unlock_irqrestore(&msi_alloc_lock, flags);
 }
 
 void pci_enum(void) {
