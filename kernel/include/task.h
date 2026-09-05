@@ -175,6 +175,7 @@ void task_exit(int code);
 void schedule(void);
 void task_init(void);
 void syscall_init(void);
+void context_switch(task_struct_t *prev, task_struct_t *next);
 
 /* Exec signal API — bitmask model */
 void do_signal(struct interrupt_frame *frame);

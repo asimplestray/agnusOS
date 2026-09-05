@@ -24,7 +24,7 @@ LDFLAGS = -n -nostdlib -T linker.ld -m elf_x86_64 --no-warn-rwx-segments
 OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o build/kernel.o \
       build/screen.o build/framebuffer.o build/timer.o build/keyboard.o build/tty.o \
       build/pmm.o build/vmm.o build/kheap.o build/pci.o \
-      build/task.o build/syscall.o build/syscall_asm.o \
+      build/task.o build/task_switch.o build/syscall.o build/syscall_asm.o \
       build/vfs.o build/ramfs.o build/elf.o build/pipe.o \
       build/procfs.o build/devfs.o build/bcache.o \
       build/ata.o build/fat32.o build/firmware.o build/workqueue.o build/dma.o build/apollo_drv.o build/polaris.o build/serial.o \
@@ -156,6 +156,11 @@ build/task.o: kernel/task.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/task_switch.o: kernel/task_switch.asm
+	@mkdir -p build
+	@echo ">> Assembling $<..."
+	@$(ASM) $(ASMFLAGS) -o $@ $<
 
 build/syscall.o: kernel/syscall.c
 	@mkdir -p build
@@ -448,11 +453,13 @@ clean:
 
 run: all
 	@echo ">> Running ApolloOS in QEMU (requires qemu-desktop for GUI)..."
-	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -hda disk.img -vga std -display sdl
+	@test -f disk.img || qemu-img create -q -f raw disk.img 64M
+	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -drive if=none,format=raw,id=disk0,file=disk.img -device virtio-blk-pci,drive=disk0 -vga std -display sdl
 
 # Fallback: VNC display (connect with: vncviewer localhost:5900)
 run-vnc: all
 	@echo ">> Running ApolloOS via VNC on localhost:5900 ..."
 	@echo "   Connect with: vncviewer localhost:5900"
-	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -hda disk.img -vga std -vnc :0
+	@test -f disk.img || qemu-img create -q -f raw disk.img 64M
+	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -drive if=none,format=raw,id=disk0,file=disk.img -device virtio-blk-pci,drive=disk0 -vga std -vnc :0
 

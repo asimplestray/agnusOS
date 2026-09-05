@@ -252,7 +252,12 @@ void kernel_main(void) {
         screen_log("WARN", COLOR_BROWN, "dogin shell falhou ao iniciar.");
     }
     while (1) {
+        extern volatile uint64_t need_resched;
         amdgpu_idle_tick();
+        if (need_resched) {
+            need_resched = 0;
+            schedule();
+        }
         __asm__ volatile("hlt");
     }
 }

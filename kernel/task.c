@@ -12,6 +12,18 @@
 
 task_struct_t *current = NULL;
 task_struct_t *task_list = NULL;
+
+/* ================================================================== */
+/* task_trampoline — first code a new kernel task runs via ret          */
+/* context_switch() pops callee-saved regs then does ret here.         */
+/* We fetch the real entry from current->rip, call it, then exit.      */
+/* ================================================================== */
+
+void task_trampoline(void) {
+    void (*entry)(void) = (void (*)(void))current->rip;
+    entry();
+    task_exit(0);
+}
 volatile uint64_t need_resched = 0;
 static uint64_t next_pid = 1;
 
@@ -163,18 +175,31 @@ task_struct_t *task_create(void (*entry)(void), uint64_t flags __attribute__((un
     task->sig_wait = 0;
     task->sig_except = 0;
 
-    /* Build synthetic interrupt frame */
-    uint64_t *sp = (uint64_t *)task->kernel_stack;
-    *--sp = 0x10;                   // SS
-    *--sp = (uint64_t)task->kernel_stack - 0x28;   // RSP
-    *--sp = 0x202;                  // RFLAGS
-    *--sp = 0x08;                   // CS
-    *--sp = (uint64_t)entry;        // RIP
-    *--sp = 0;                      // error code
-    *--sp = 0;                      // interrupt number
-    *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;
-    *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;
-    *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;
+    /* Build initial kernel stack for ret-based context switch.
+     *
+     * context_switch pops r15-rbx then does `ret`.  The return address
+     * must be `task_trampoline`, which reads current->rip (the real
+     * entry fn) and calls it.  When entry() returns, trampoline calls
+     * task_exit(0).
+     *
+     * Stack (high → low):
+     *   [trampoline]   <- ret jumps here after restoring callee-saved regs
+     *   [rbx = 0]
+     *   [rbp = 0]
+     *   [r12 = 0]
+     *   [r13 = 0]
+     *   [r14 = 0]
+     *   [r15 = 0]     <- rsp
+     */
+    extern void task_trampoline(void);
+    uint64_t *sp = (uint64_t *)task->kernel_stack; /* top of 16K block */
+    *--sp = (uint64_t)task_trampoline;  /* return address for ret */
+    *--sp = 0; /* rbx */
+    *--sp = 0; /* rbp */
+    *--sp = 0; /* r12 */
+    *--sp = 0; /* r13 */
+    *--sp = 0; /* r14 */
+    *--sp = 0; /* r15 */
     task->rsp = (uint64_t)sp;
     task->rbp = 0;
 
@@ -246,16 +271,7 @@ void schedule(void) {
     unsigned long flags;
     RUNQUEUE_LOCK(flags);
 
-    if (current->fpu_used) {
-        fpu_save(current->fxsave_area);
-        __asm__ volatile(
-            "mov %%cr0, %%rax\n"
-            "or $0x8, %%rax\n"
-            "mov %%rax, %%cr0\n"
-            ::: "rax", "memory"
-        );
-    }
-
+    /* Boost sleeping tasks */
     task_struct_t *t = task_list;
     do {
         if (t != current && t->state == TASK_STATE_RUNNING) {
@@ -265,13 +281,14 @@ void schedule(void) {
         t = t->next;
     } while (t != task_list);
 
+    /* Decay current task */
     if (current->state == TASK_STATE_RUNNING) {
         if (current->priority > 1) current->priority--;
         if (current->counter < current->priority) current->counter = current->priority;
     }
 
+    /* Pick next RUNNING task */
     task_struct_t *next = current->next;
-
     while (next != current) {
         if (next->state == TASK_STATE_RUNNING) break;
         next = next->next;
@@ -282,6 +299,7 @@ void schedule(void) {
             RUNQUEUE_UNLOCK(flags);
             return;
         }
+        /* Force PID 1 (init/idle) */
         task_struct_t *t2 = task_list;
         do {
             if (t2->pid == 1) { next = t2; break; }
@@ -291,17 +309,49 @@ void schedule(void) {
             next->state = TASK_STATE_RUNNING;
     }
 
+    /* No actual switch needed */
+    if (next == current) {
+        RUNQUEUE_UNLOCK(flags);
+        return;
+    }
+
+    /* Save FPU of outgoing task */
+    if (current->fpu_used) {
+        fpu_save(current->fxsave_area);
+        /* Set TS so we lazy-restore on next FPU use */
+        __asm__ volatile(
+            "mov %%cr0, %%rax\n"
+            "or $0x8, %%rax\n"
+            "mov %%rax, %%cr0\n"
+            ::: "rax", "memory"
+        );
+    }
+
+    task_struct_t *prev = current;
     current = next;
     current->counter = current->priority;
 
+    /* Release the run-queue lock BEFORE switching stacks.
+     * The target task may need to acquire this lock when it
+     * eventually calls schedule() itself. */
+    RUNQUEUE_UNLOCK(flags);
+
+    /* Switch kernel stacks via assembly context switch.
+     * After this returns, we are on the new task's stack. */
+    context_switch(prev, next);
+
+    /* Re-acquire lock for the resumed task */
+    RUNQUEUE_LOCK(flags);
+
+    /* Restore FPU of newly-resumed task (if it had FPU active) */
     if (current->fpu_used) {
-        fpu_restore(current->fxsave_area);
         __asm__ volatile(
             "mov %%cr0, %%rax\n"
             "and $~0x8, %%rax\n"
             "mov %%rax, %%cr0\n"
             ::: "rax", "memory"
         );
+        fpu_restore(current->fxsave_area);
     }
 
     RUNQUEUE_UNLOCK(flags);

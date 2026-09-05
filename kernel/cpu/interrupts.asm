@@ -2,12 +2,7 @@ bits 64
 
 extern interrupt_handler
 extern vmm_page_fault_handler
-extern current
-extern schedule
 extern need_resched
-
-; task_struct.rsp offset (see kernel/include/task.h)
-task_struct_rsp equ 96
 
 section .text
 
@@ -40,33 +35,13 @@ irq_common_stub:
     ; Fall through to common restore with preemption check
     jmp irq_common_restore
 
-; Common restore path with preemptive context switch check
+; Common restore path
+; NOTE: Preemption is handled exclusively by schedule() → context_switch().
+; The timer ISR sets need_resched=1; the idle loop and kworker check it
+; after waking from hlt and call schedule() themselves.
+; We do NOT context-switch here — it would conflict with
+; context_switch()'s ret-based stack swap (different frame layouts).
 irq_common_restore:
-    ; --- Preemptive context switch check ---
-    ; If need_resched was set by the C handler (timer quantum expired),
-    ; save the current task's frame pointer, pick the next task, and
-    ; switch to its frame. The register values live inside each task's
-    ; own kernel stack frame, so we only ever swap the stack pointer.
-    cmp qword [rel need_resched], 0
-    je .restore_regs
-
-    ; Clear the flag so we don't reschedule again on this IRQ return
-    mov qword [rel need_resched], 0
-
-    ; Save this task's frame pointer (rsp points at its saved R15 slot)
-    mov rax, [rel current]
-    test rax, rax
-    jz .restore_regs
-    mov [rax + task_struct_rsp], rsp
-
-    ; Call the scheduler: pure selection, updates `current`
-    call schedule
-
-    ; Load the next task's frame pointer
-    mov rax, [rel current]
-    test rax, rax
-    jz .restore_regs
-    mov rsp, [rax + task_struct_rsp]
 
 .restore_regs:
     ; Restore registers

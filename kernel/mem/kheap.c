@@ -8,10 +8,10 @@
 #define HEAP_INITIAL_SIZE 0x800000   // 8MB Initial Heap Size
 
 struct heap_block {
-    size_t size;               // Size of usable data in this block
-    int is_free;              // 1 if this block is free, 0 if in use
-    struct heap_block* next;   // Pointer to the next block in the list
-};
+    size_t size;
+    int is_free;
+    struct heap_block* next;
+} __attribute__((aligned(16)));
 
 static struct heap_block* heap_start_block = 0;
 static uint64_t heap_end = 0;
@@ -48,8 +48,8 @@ void kheap_init(void) {
 void* kmalloc(size_t size) {
     if (size == 0) return 0;
 
-    // Align size to 8 bytes for double-word CPU alignment speed
-    size = (size + 7) & ~7;
+    // Align to 16 bytes for fxsave (task_struct) and general 16B
+    size = (size + 15) & ~15;
     
     struct heap_block* current = heap_start_block;
     
@@ -57,7 +57,7 @@ void* kmalloc(size_t size) {
     while (current != 0) {
         if (current->is_free && current->size >= size) {
             // Can we split this block?
-            if (current->size >= size + sizeof(struct heap_block) + 8) {
+            if (current->size >= size + sizeof(struct heap_block) + 16) {
                 struct heap_block* new_block = (struct heap_block*)((uintptr_t)current + sizeof(struct heap_block) + size);
                 
                 new_block->size = current->size - size - sizeof(struct heap_block);
@@ -101,7 +101,7 @@ void* krealloc(void* ptr, size_t size) {
     struct heap_block* block = (struct heap_block*)((uintptr_t)ptr - sizeof(struct heap_block));
     
     if (block->size >= size) {
-        if (block->size >= size + sizeof(struct heap_block) + 8) {
+        if (block->size >= size + sizeof(struct heap_block) + 16) {
             struct heap_block* new_block = (struct heap_block*)((uintptr_t)block + sizeof(struct heap_block) + size);
             new_block->size = block->size - size - sizeof(struct heap_block);
             new_block->is_free = 1;
