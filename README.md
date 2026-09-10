@@ -39,6 +39,8 @@ AOS_Socket         AOS_Bind           AOS_Send           AOS_Recv
 AOS_CloseSocket    AOS_Select         AOS_SetSockOpt     AOS_GetSockOpt
 AOS_GetSocketAddr  AOS_SocketIOCtl    AOS_SocketBaseTags AOS_SendTo
 AOS_RecvFrom
+AOS_CreatePool     AOS_DeletePool     AOS_AllocPooled    AOS_FreePooled
+AOS_PoolAvail
 ```
 
 No `SYS_*`, `O_*`, POSIX signal numbers, `fd_array`, `pgid`, `fork`/`COW` machinery.
@@ -59,7 +61,7 @@ agnusOS/
 │   │   │   └── apollo/      # apollo_drv (universal GPU validation), polaris legacy
 │   │   ├── net/             # rtl8139
 │   │   └── ...              # fb (GOP), kbd (ABNT2), mouse, serial, PIT 100Hz, RTC, ATA, TTY, WM
-│   ├── exec/                # ExecBase (SysBase), library system, MEMF alloc
+│   ├── exec/                # ExecBase (SysBase), library system, MEMF alloc, **Memory Pools**
 │   ├── fs/                  # VFS, RamFS, FAT32, procfs, devfs, pipe, bcache, firmware cpio, assign
 │   ├── ipc/                 # MsgPort (128B messages)
 │   ├── kernel/              # DMA ops, workqueue+timerwheel, panic
@@ -68,7 +70,7 @@ agnusOS/
 │   ├── net/                 # ARP, IP, ICMP, UDP, loopback, core
 │   ├── pci/                 # MSI/MSI-X, BAR WC, IOMMU VT-d identity
 │   ├── kernel.c             # Init sequence → idle
-│   ├── syscall.c            # 61 AOS_* traps
+│   ├── syscall.c            # **67 AOS_* traps**
 │   └── task.c               # Scheduler, signal bitmask, task mgmt
 ├── scripts/                 # make_fw_initrd.sh (Polaris10 blobs)
 ├── vgpu/                    # QEMU fork with GPU device models (NVIDIA/AMD/Intel)
@@ -122,6 +124,7 @@ On every boot: `drm_gem_test` + `dma_test_run_all` + `assign_test`/`msgport_test
 | Memory (PMM/VMM/kheap) | ✅ Stable |
 | Scheduler (preempt, FPU lazy) | ✅ Stable |
 | Signal bitmask (32-bit) | ✅ Complete |
+| **Wait blocking real (timeout)** | ✅ **Complete** |
 | MsgPort / Assign | ✅ Complete |
 | DOS layer (BPTR, FileInfoBlock) | ✅ Complete + wired to syscalls |
 | VFS + RamFS + FAT32 VFAT/LFN | ✅ RW |
@@ -131,19 +134,18 @@ On every boot: `drm_gem_test` + `dma_test_run_all` + `assign_test`/`msgport_test
 | amdgpu (Polaris/Navi22, DC) | ⚠️ MINIMAL — GFX ring, mode, thermal |
 | RTL8139 + IPv4/UDP + bsdsocket | ✅ |
 | TTY (canon, termios, ABNT2) | ✅ |
+| **Memory Pools (MEMF_CHIP/FAST/PUBLIC)** | ✅ **Complete** |
 | dogin shell | ⚠️ Basic — pipes/redirect/env/Run pending |
 
 ---
 
 ## Roadmap (Next)
 
-1. **`aos_wait` blocking real** — integrate scheduler + timer + signal bitmask
-2. **Memory Pools** (`MEMF_CHIP`→VRAM, `MEMF_FAST`→RAM, `MEMF_PUBLIC`)
-3. **IORequest async** (`SendIO`/`WaitIO`/`AbortIO` via MsgPort + kworker)
-4. **dogin** — pipes, redirect, env vars, `Run`, `Execute`, `If`/`While`
-5. **Intuition** — Layers (damage-rectangle), Screens, Windows, Gadgets
-6. **Datatypes** — ELF/PNG/IFF/text loaders
-7. **amdgpu** — full GFX/compute, SDMA, formally verified command submission
+1. **IORequest async** (`SendIO`/`WaitIO`/`AbortIO` via MsgPort + kworker)
+2. **dogin** — pipes, redirect, env vars, `Run`, `Execute`, `If`/`While`
+3. **Intuition** — Layers (damage-rectangle), Screens, Windows, Gadgets
+4. **Datatypes** — ELF/PNG/IFF/text loaders
+5. **amdgpu** — full GFX/compute, SDMA, formally verified command submission
 
 ---
 

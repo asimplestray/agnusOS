@@ -63,6 +63,22 @@ void    *exec_alloc_mem(uint32_t size, uint32_t flags);
 void     exec_free_mem(void *ptr, uint32_t size);
 uint32_t exec_avail_mem(uint32_t flags);
 
+/* Memory Pools (AmigaOS Exec style) */
+typedef struct mem_pool mem_pool_t;
+
+/* Memory flags (from <exec/types.h>) */
+/* #define MEMF_CHIP     (1UL << 0)   DMA-accessible (VRAM, device memory) */
+/* #define MEMF_FAST     (1UL << 1)   CPU-only, fastest RAM */
+/* #define MEMF_PUBLIC   (1UL << 2)   Shareable between tasks */
+#define MEMF_CLEAR    (1UL << 16)  /* Zero on allocation */
+#define MEMF_REVERSE  (1UL << 17)  /* Allocate from high addresses down */
+
+mem_pool_t *exec_create_pool(uint32_t flags, uint32_t pudge_size, uint32_t thresh_size);
+void        exec_delete_pool(mem_pool_t *pool);
+void       *exec_alloc_pooled(mem_pool_t *pool, uint32_t size);
+void        exec_free_pooled(mem_pool_t *pool, void *ptr, uint32_t size);
+uint32_t    exec_pool_available(mem_pool_t *pool, uint32_t flags);
+
 /* Cache */
 void     exec_cache_clear(void);
 void     exec_cache_clear_ea(void *addr, uint32_t size);

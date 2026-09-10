@@ -37,6 +37,11 @@ void syscall_init(void) {
     syscall_table[AOS_SetBrk]       = (void *)aos_setbrk;
     syscall_table[AOS_AllocMem]     = (void *)aos_allocmem;
     syscall_table[AOS_FreeMem]      = (void *)aos_freemem;
+    syscall_table[AOS_CreatePool]   = (void *)aos_create_pool;
+    syscall_table[AOS_DeletePool]   = (void *)aos_delete_pool;
+    syscall_table[AOS_AllocPooled]  = (void *)aos_alloc_pooled;
+    syscall_table[AOS_FreePooled]   = (void *)aos_free_pooled;
+    syscall_table[AOS_PoolAvail]    = (void *)aos_pool_avail;
     syscall_table[AOS_DoIO]         = (void *)aos_doio;
     syscall_table[AOS_FindTask]     = (void *)aos_find_task;
     syscall_table[AOS_Yield]        = (void *)aos_yield;
@@ -144,6 +149,13 @@ int64_t aos_yield(struct interrupt_frame *frame) {
 /* Wait — simplified task exit collection (no POSIX WIFEXITED)          */
 /* ================================================================== */
 
+/* Forward declaration for timer callback */
+static void wait_timeout_callback(uint64_t data);
+
+/* ================================================================== */
+/* Wait — signal bitmask wait with optional timeout                    */
+/* ================================================================== */
+
 int64_t aos_wait(int64_t signal_bits, int64_t timeout_ms, struct interrupt_frame *frame) {
     (void)frame;
     if (!current) return -AOS_ERR_NOT_FOUND;
@@ -160,11 +172,58 @@ int64_t aos_wait(int64_t signal_bits, int64_t timeout_ms, struct interrupt_frame
     if (ready)
         return (int64_t)ready;
 
-    /* No matching signals — yield (simplified, no blocking wait yet) */
+    /* Set up signal wait mask */
+    current->sig_wait = (uint32_t)signal_bits;
+
+    /* Set up timeout timer if requested */
+    timer_entry_t timeout_timer;
+    bool has_timeout = (timeout_ms > 0);
+    if (has_timeout) {
+        uint64_t timeout_ticks = (timeout_ms * 100) / 1000;  /* ms to ticks (100Hz) */
+        if (timeout_ticks == 0) timeout_ticks = 1;
+        
+        timeout_timer.expires = timer_get_ticks() + timeout_ticks;
+        timeout_timer.function = wait_timeout_callback;
+        timeout_timer.data = (uint64_t)current;
+        timeout_timer.next = NULL;
+        timer_add(&timeout_timer);
+    }
+
+    /* Mark task as waiting for signals */
+    current->state = TASK_STATE_WAITING;
+
+    /* Double-check for signals that may have arrived while setting up */
+    ready = (uint32_t)signal_bits & current->sig_recv;
+    if (ready) {
+        current->sig_wait = 0;
+        current->state = TASK_STATE_RUNNING;
+        if (has_timeout) timer_remove(&timeout_timer);
+        return (int64_t)ready;
+    }
+
+    /* Yield to scheduler — will resume when signal arrives or timeout fires */
     extern volatile uint64_t need_resched;
     need_resched = 1;
-    (void)timeout_ms;
-    return 0;
+    schedule();
+
+    /* Resumed — collect signals that arrived */
+    ready = (uint32_t)signal_bits & current->sig_recv;
+    current->sig_wait = 0;
+    current->state = TASK_STATE_RUNNING;
+
+    if (has_timeout) timer_remove(&timeout_timer);
+
+    return (int64_t)ready;
+}
+
+/* Timeout callback — wakes up the waiting task */
+static void wait_timeout_callback(uint64_t data) {
+    task_struct_t *task = (task_struct_t *)data;
+    if (task && task->state == TASK_STATE_WAITING) {
+        task->state = TASK_STATE_RUNNING;
+        extern volatile uint64_t need_resched;
+        need_resched = 1;
+    }
 }
 
 /* ================================================================== */
@@ -227,6 +286,53 @@ int64_t aos_freemem(int64_t addr, int64_t size, struct interrupt_frame *frame) {
         vmm_unmap_page_in_pml4(pml4, v);
     }
     return 0;
+}
+
+/* ================================================================== */
+/* Memory Pools                                                        */
+/* ================================================================== */
+
+int64_t aos_create_pool(int64_t flags, int64_t pudge_size, int64_t thresh_size, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!current) return -AOS_ERR_NOT_FOUND;
+    
+    mem_pool_t *pool = exec_create_pool((uint32_t)flags, (uint32_t)pudge_size, (uint32_t)thresh_size);
+    if (!pool) return -AOS_ERR_NO_MEMORY;
+    
+    return (int64_t)pool;
+}
+
+int64_t aos_delete_pool(int64_t pool_ptr, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!pool_ptr) return -AOS_ERR_BAD_ARGUMENT;
+    
+    exec_delete_pool((mem_pool_t *)pool_ptr);
+    return 0;
+}
+
+int64_t aos_alloc_pooled(int64_t pool_ptr, int64_t size, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!pool_ptr || size <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    
+    void *ptr = exec_alloc_pooled((mem_pool_t *)pool_ptr, (uint32_t)size);
+    if (!ptr) return -AOS_ERR_NO_MEMORY;
+    
+    return (int64_t)ptr;
+}
+
+int64_t aos_free_pooled(int64_t pool_ptr, int64_t ptr, int64_t size, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!pool_ptr || !ptr || size <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    
+    exec_free_pooled((mem_pool_t *)pool_ptr, (void *)ptr, (uint32_t)size);
+    return 0;
+}
+
+int64_t aos_pool_avail(int64_t pool_ptr, int64_t flags, struct interrupt_frame *frame) {
+    (void)frame;
+    if (!pool_ptr) return -AOS_ERR_BAD_ARGUMENT;
+    
+    return (int64_t)exec_pool_available((mem_pool_t *)pool_ptr, (uint32_t)flags);
 }
 
 /* ================================================================== */

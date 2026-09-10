@@ -32,7 +32,7 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o build/bsdsocket.o \
       build/drm_gem.o \
       build/assign.o build/msgport.o \
-      build/exec.o build/exec_library.o \
+      build/exec.o build/exec_library.o build/exec_mempool.o \
       build/dos.o build/dos_path.o \
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
@@ -424,6 +424,11 @@ build/msgport.o: kernel/ipc/msgport.c kernel/include/msgport.h
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/exec.o: kernel/exec/exec.c kernel/include/exec/exec.h kernel/include/exec/task.h kernel/include/exec/library.h kernel/include/exec/types.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
+build/exec_mempool.o: kernel/exec/mempool.c kernel/include/exec/exec.h kernel/include/exec/task.h kernel/include/exec/types.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

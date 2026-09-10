@@ -133,55 +133,60 @@ struct sockaddr_in {
 #define AOS_SetBrk          8   /* exec_alloc_mem (heap growth) */
 #define AOS_AllocMem        9   /* exec_alloc_mem with MEMF flags */
 #define AOS_FreeMem        10   /* exec_free_mem */
-#define AOS_DoIO           11   /* ioctl — TTY/DRM control */
+#define AOS_CreatePool     11   /* exec_create_pool */
+#define AOS_DeletePool     12   /* exec_delete_pool */
+#define AOS_AllocPooled    13   /* exec_alloc_pooled */
+#define AOS_FreePooled     14   /* exec_free_pooled */
+#define AOS_PoolAvail      15   /* exec_pool_available */
+#define AOS_DoIO           16   /* ioctl — TTY/DRM control */
 #define AOS_FindTask       12   /* exec find current task */
 #define AOS_Yield          13   /* yield to scheduler */
 #define AOS_Delay          14   /* exec_delay (ticks) */
-#define AOS_GetSysTime     15   /* exec_eclock */
-#define AOS_AddTask        16   /* exec_create_task (kernel only) */
-#define AOS_Signal         17   /* exec_signal (set signal bits) */
-#define AOS_SetSignal      18   /* exec_set_signal (swap mask) */
-#define AOS_ReturnSignal   19   /* exec_check_signal */
-#define AOS_SendSignal     20   /* exec_signal on another task */
-#define AOS_Pipe           21   /* create MsgPort pair (replaces pipe) */
-#define AOS_Seek           22   /* dos_seek */
-#define AOS_Examine        23   /* dos_examine → file_info_block_t */
-#define AOS_Clock          24   /* exec_eclock */
-#define AOS_PutStr         25   /* serial/log output */
-#define AOS_IoErr          26   /* dos_io_err */
-#define AOS_SetIoErr       27   /* dos_set_io_err */
-#define AOS_CreateDir      28   /* dos_create_dir */
-#define AOS_DeleteDir      33   /* dos_delete_file (dirs) */
-#define AOS_DeleteFile     34   /* dos_delete_file */
-#define AOS_CurrentDir     35   /* dos_current_dir */
-#define AOS_CurrentDirFD   36   /* dos_current_dir (by BPTR) */
-#define AOS_LockCWD        37   /* get current assign path */
-#define AOS_Rename         38   /* dos_rename */
-#define AOS_ExamineDir     39   /* dos_ex_next → file_info_block_t */
-#define AOS_Socket         40   /* network socket */
-#define AOS_Bind           41   /* network bind */
-#define AOS_Send           42   /* network send */
-#define AOS_Recv           43   /* network recv */
-#define AOS_CloseSocket    44   /* network close */
-#define AOS_Flush          45   /* dos_flush */
-#define AOS_Assign         46   /* assign_set/lookup/unset */
-#define AOS_CreatePort     47   /* msgport_create */
-#define AOS_DeletePort     48   /* msgport_delete */
-#define AOS_PutMsg         49   /* msgport_put */
-#define AOS_GetMsg         50   /* msgport_get */
-#define AOS_WaitPort       51   /* msgport_wait */
-#define AOS_ReplyMsg       52   /* msgport_reply */
+#define AOS_GetSysTime     20   /* exec_eclock */
+#define AOS_AddTask        21   /* exec_create_task (kernel only) */
+#define AOS_Signal         22   /* exec_signal (set signal bits) */
+#define AOS_SetSignal      23   /* exec_set_signal (swap mask) */
+#define AOS_ReturnSignal   24   /* exec_check_signal */
+#define AOS_SendSignal     25   /* exec_signal on another task */
+#define AOS_Pipe           26   /* create MsgPort pair (replaces pipe) */
+#define AOS_Seek           27   /* dos_seek */
+#define AOS_Examine        28   /* dos_examine → file_info_block_t */
+#define AOS_Clock          29   /* exec_eclock */
+#define AOS_PutStr         30   /* serial/log output */
+#define AOS_IoErr          31   /* dos_io_err */
+#define AOS_SetIoErr       32   /* dos_set_io_err */
+#define AOS_CreateDir      33   /* dos_create_dir */
+#define AOS_DeleteDir      34   /* dos_delete_file (dirs) */
+#define AOS_DeleteFile     35   /* dos_delete_file */
+#define AOS_CurrentDir     36   /* dos_current_dir */
+#define AOS_CurrentDirFD   37   /* dos_current_dir (by BPTR) */
+#define AOS_LockCWD        38   /* get current assign path */
+#define AOS_Rename         39   /* dos_rename */
+#define AOS_ExamineDir     40   /* dos_ex_next → file_info_block_t */
+#define AOS_Socket         41   /* network socket */
+#define AOS_Bind           42   /* network bind */
+#define AOS_Send           43   /* network send */
+#define AOS_Recv           44   /* network recv */
+#define AOS_CloseSocket    45   /* network close */
+#define AOS_Flush          46   /* dos_flush */
+#define AOS_Assign         47   /* assign_set/lookup/unset */
+#define AOS_CreatePort     48   /* msgport_create */
+#define AOS_DeletePort     49   /* msgport_delete */
+#define AOS_PutMsg         50   /* msgport_put */
+#define AOS_GetMsg         51   /* msgport_get */
+#define AOS_WaitPort       52   /* msgport_wait */
+#define AOS_ReplyMsg       53   /* msgport_reply */
 /* bsdsocket.library */
-#define AOS_Select         53
-#define AOS_SetSockOpt     54
-#define AOS_GetSockOpt     55
-#define AOS_GetSocketAddr  56
-#define AOS_SocketIOCtl    57
-#define AOS_SocketBaseTags 58
-#define AOS_SendTo         59
-#define AOS_RecvFrom       60
+#define AOS_Select         54
+#define AOS_SetSockOpt     55
+#define AOS_GetSockOpt     56
+#define AOS_GetSocketAddr  57
+#define AOS_SocketIOCtl    58
+#define AOS_SocketBaseTags 59
+#define AOS_SendTo         60
+#define AOS_RecvFrom       61
 
-#define NR_SYSCALLS         61
+#define NR_SYSCALLS         67
 
 /* ------------------------------------------------------------------ */
 /* Syscall prototypes                                                   */
@@ -198,6 +203,11 @@ int64_t aos_loadseg(const char *path, struct interrupt_frame *frame);
 int64_t aos_setbrk(int64_t size, struct interrupt_frame *frame);
 int64_t aos_allocmem(int64_t size, int64_t mem_flags, struct interrupt_frame *frame);
 int64_t aos_freemem(int64_t addr, int64_t size, struct interrupt_frame *frame);
+int64_t aos_create_pool(int64_t flags, int64_t pudge_size, int64_t thresh_size, struct interrupt_frame *frame);
+int64_t aos_delete_pool(int64_t pool_ptr, struct interrupt_frame *frame);
+int64_t aos_alloc_pooled(int64_t pool_ptr, int64_t size, struct interrupt_frame *frame);
+int64_t aos_free_pooled(int64_t pool_ptr, int64_t ptr, int64_t size, struct interrupt_frame *frame);
+int64_t aos_pool_avail(int64_t pool_ptr, int64_t flags, struct interrupt_frame *frame);
 int64_t aos_doio(int64_t handle, uint64_t request, void *arg, struct interrupt_frame *frame);
 int64_t aos_find_task(struct interrupt_frame *frame);
 int64_t aos_yield(struct interrupt_frame *frame);
