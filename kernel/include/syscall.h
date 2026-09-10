@@ -8,7 +8,7 @@
 #include <msgport.h>
 
 /* ------------------------------------------------------------------ */
-/* ApolloOS time — replaces POSIX struct timespec                       */
+/* AgnusOS time — replaces POSIX struct timespec                       */
 /* ------------------------------------------------------------------ */
 
 typedef struct aos_timeval {
@@ -96,22 +96,6 @@ typedef struct aos_dir_entry {
 #define AOS_O_TRUNC    8
 #define AOS_O_APPEND  16
 
-/* Legacy compat */
-#define O_RDONLY  AOS_O_RDONLY
-#define O_WRONLY  AOS_O_WRONLY
-#define O_RDWR    AOS_O_RDWR
-#define O_ACCMODE 3
-#define O_CREAT   AOS_O_CREAT
-#define O_TRUNC   AOS_O_TRUNC
-#define O_APPEND  AOS_O_APPEND
-#define O_EXCL    0
-#define O_NOCTTY  0
-#define O_NONBLOCK 0
-#define O_SYNC    0
-#define O_DIRECTORY 0
-#define O_NOFOLLOW 0
-#define O_CLOEXEC 0
-
 /* ------------------------------------------------------------------ */
 /* Socket types                                                         */
 /* ------------------------------------------------------------------ */
@@ -133,7 +117,7 @@ struct sockaddr_in {
 #define SOCK_DGRAM  2
 
 /* ------------------------------------------------------------------ */
-/* ApolloOS trap numbers — frozen in uAPI 1.0                           */
+/* AgnusOS trap numbers — frozen in uAPI 1.0                           */
 /*                                                                     */
 /* Naming follows AmigaDOS/Exec conventions. Numeric ABI is stable.     */
 /* ------------------------------------------------------------------ */
@@ -166,11 +150,7 @@ struct sockaddr_in {
 #define AOS_PutStr         25   /* serial/log output */
 #define AOS_IoErr          26   /* dos_io_err */
 #define AOS_SetIoErr       27   /* dos_set_io_err */
-#define AOS_SetProcGroup   28   /* (kept for compat) */
-#define AOS_GetProcGroup   29   /* (kept for compat) */
-#define AOS_SetConProc     30   /* TTY foreground pgrp */
-#define AOS_GetConProc     31   /* TTY foreground pgrp */
-#define AOS_CreateDir      32   /* dos_create_dir */
+#define AOS_CreateDir      28   /* dos_create_dir */
 #define AOS_DeleteDir      33   /* dos_delete_file (dirs) */
 #define AOS_DeleteFile     34   /* dos_delete_file */
 #define AOS_CurrentDir     35   /* dos_current_dir */
@@ -202,28 +182,6 @@ struct sockaddr_in {
 #define AOS_RecvFrom       60
 
 #define NR_SYSCALLS         61
-
-/* ------------------------------------------------------------------ */
-/* Legacy compat aliases                                                */
-/* ------------------------------------------------------------------ */
-
-#define SYS_EXIT       AOS_Exit
-#define SYS_FORK       AOS_SpawnTask
-#define SYS_READ       AOS_Read
-#define SYS_WRITE      AOS_Write
-#define SYS_OPEN       AOS_Open
-#define SYS_CLOSE      AOS_Close
-#define SYS_WAITPID    AOS_Wait
-#define SYS_EXECVE     AOS_LoadSeg
-#define SYS_BRK        AOS_SetBrk
-#define SYS_MMAP       AOS_AllocMem
-#define SYS_MUNMAP     AOS_FreeMem
-#define SYS_IOCTL      AOS_DoIO
-#define SYS_GETPID     AOS_FindTask
-#define SYS_YIELD      AOS_Yield
-#define SYS_NANOSLEEP  AOS_Delay
-#define SYS_GETTIME    AOS_GetSysTime
-#define SYS_SPAWN      AOS_AddTask
 
 /* ------------------------------------------------------------------ */
 /* Syscall prototypes                                                   */
@@ -262,10 +220,6 @@ int64_t aos_seek(int64_t handle, int64_t position, int64_t offset_type, struct i
 int64_t aos_examine(int64_t lock, void *fib_buf, int64_t fib_size, struct interrupt_frame *frame);
 int64_t aos_ioerr(struct interrupt_frame *frame);
 int64_t aos_set_ioerr(int64_t err, struct interrupt_frame *frame);
-int64_t aos_set_procgroup(int64_t pid, int64_t pgid, struct interrupt_frame *frame);
-int64_t aos_get_procgroup(int64_t pid, struct interrupt_frame *frame);
-int64_t aos_set_conproc(int64_t fd, int64_t pgid, struct interrupt_frame *frame);
-int64_t aos_get_conproc(int64_t fd, struct interrupt_frame *frame);
 int64_t aos_create_dir(const char *name, struct interrupt_frame *frame);
 int64_t aos_delete_dir(const char *name, struct interrupt_frame *frame);
 int64_t aos_delete_file(const char *name, struct interrupt_frame *frame);

@@ -190,7 +190,7 @@ static struct drm_driver_version apollo_driver_version = {
     .patch = 0,
     .name = "apollogpu",
     .date = "2026-08-14",
-    .desc = "ApolloOS Universal GPU Driver"
+    .desc = "AgnusOS Universal GPU Driver"
 };
 
 // PCI device ID table
@@ -235,13 +235,13 @@ static struct drm_driver apollo_driver = {
 // Module entry points
 static int __init apollo_driver_init(void)
 {
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU Driver: Loading");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU Driver: Loading");
     return drm_register_driver(&apollo_driver, apollo_pci_id_table);
 }
 
 static void __exit apollo_driver_exit(void)
 {
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU Driver: Unloading");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU Driver: Unloading");
     drm_unregister_driver(&apollo_driver);
 }
 
@@ -259,13 +259,13 @@ static const char *apollo_driver_get_desc(struct drm_device *dev)
 
 static int apollo_driver_open(struct drm_device *dev, void *file_private)
 {
-    screen_log("DEBUG", COLOR_CYAN, "ApolloOS GPU: Device opened");
+    screen_log("DEBUG", COLOR_CYAN, "AgnusOS GPU: Device opened");
     return 0;
 }
 
 static int apollo_driver_release(struct drm_device *dev, void *file_private)
 {
-    screen_log("DEBUG", COLOR_CYAN, "ApolloOS GPU: Device released");
+    screen_log("DEBUG", COLOR_CYAN, "AgnusOS GPU: Device released");
 }
 
 static int apollo_driver_gem_create_object(struct drm_device *dev, size_t size, void **obj)
@@ -279,7 +279,7 @@ static int apollo_driver_gem_create_object(struct drm_device *dev, size_t size, 
     // Try to allocate from VRAM first, fall back to system memory
     void *mem_raw = kmalloc(size + PAGE_SIZE - 1);
     if (!mem_raw) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to allocate GEM object");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to allocate GEM object");
         return -ENOMEM;
     }
     mem = (void*)(((uintptr_t)mem_raw + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
@@ -287,23 +287,23 @@ static int apollo_driver_gem_create_object(struct drm_device *dev, size_t size, 
     memset(mem, 0, size);
     *obj = mem;
     
-    screen_log("DEBUG", COLOR_CYAN, "ApolloOS GPU: Created GEM object");
+    screen_log("DEBUG", COLOR_CYAN, "AgnusOS GPU: Created GEM object");
     return 0;
 }
 
 static void apollo_driver_gem_free_object(struct drm_device *dev, void *obj)
 {
-    screen_log("DEBUG", COLOR_CYAN, "ApolloOS GPU: Freeing GEM object");
+    screen_log("DEBUG", COLOR_CYAN, "AgnusOS GPU: Freeing GEM object");
     kfree(obj);
 }
 
 static int apollo_driver_load(struct drm_device *dev)
 {
-    serial_print("ApolloOS: apollo_driver_load ENTRY\n");
+    serial_print("AgnusOS: apollo_driver_load ENTRY\n");
     struct apollo_gpu_priv *priv;
     int ret;
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Loading driver for device");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Loading driver for device");
     
     // Get PCI location from drm_device
     uint8_t bus = dev->pci_bus;
@@ -314,7 +314,7 @@ static int apollo_driver_load(struct drm_device *dev)
     priv = kmalloc(sizeof(struct apollo_gpu_priv));
     memset(priv, 0, sizeof(struct apollo_gpu_priv));
     if (!priv) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to allocate private structure");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to allocate private structure");
         return -ENOMEM;
     }
     
@@ -339,27 +339,27 @@ static int apollo_driver_load(struct drm_device *dev)
         priv->chip_generation = APOLLO_CHIP_GEN_POLARIS30;
         priv->chip_revision = 0x0;
         priv->is_polaris30 = true;
-        screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Detected RX 590 GME (Polaris 30/GFX8)");
+        screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Detected RX 590 GME (Polaris 30/GFX8)");
     } else if (vendor == 0x1002 && (device == 0x67ef || device == 0x67df || device == 0x67ff)) { // RX 480/580/570 (Polaris 10/20)
         priv->chip_family = APOLLO_CHIP_FAMILY_POLARIS;
         priv->chip_generation = APOLLO_CHIP_GEN_POLARIS20;
         priv->chip_revision = 0x0;
         priv->is_polaris30 = false;
-        screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Detected RX 480/580/570 (Polaris 20/GFX8)");
+        screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Detected RX 480/580/570 (Polaris 20/GFX8)");
     } else if (vendor == 0x10de && (device == 0x1140 || device == 0x0fc0)) { // NVIDIA Kepler
         priv->chip_family = APOLLO_CHIP_FAMILY_KEPLER;
         priv->chip_generation = APOLLO_CHIP_GEN_KEPLER;
         priv->chip_revision = 0x0;
         priv->is_polaris30 = false;
-        screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Detected NVIDIA Kepler GPU");
+        screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Detected NVIDIA Kepler GPU");
     } else if (vendor == 0x8086 && device == 0x4565) { // Intel Xe-LP
         priv->chip_family = APOLLO_CHIP_FAMILY_XE;
         priv->chip_generation = APOLLO_CHIP_GEN_XE_LP;
         priv->chip_revision = 0x0;
         priv->is_polaris30 = false;
-        screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Detected Intel Xe-LP GPU");
+        screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Detected Intel Xe-LP GPU");
     } else {
-        screen_log("WARN", COLOR_BROWN, "ApolloOS GPU: Unknown chip detected");
+        screen_log("WARN", COLOR_BROWN, "AgnusOS GPU: Unknown chip detected");
         kfree(priv);
         dev->dev_private = NULL;
         return -ENODEV;
@@ -368,57 +368,57 @@ static int apollo_driver_load(struct drm_device *dev)
     // Initialize memory subsystem
     ret = apollo_gpu_init_memory(priv);
     if (ret) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to initialize memory");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to initialize memory");
         goto err_free_priv;
     }
     
-    serial_print("ApolloOS: apollo_driver_load - about to init Polaris\n");
+    serial_print("AgnusOS: apollo_driver_load - about to init Polaris\n");
     
     // Initialize Polaris-specific hardware (for RX 480/580/570)
     if (priv->chip_family == APOLLO_CHIP_FAMILY_POLARIS && 
         (priv->chip_generation == APOLLO_CHIP_GEN_POLARIS20 || 
          priv->chip_generation == APOLLO_CHIP_GEN_POLARIS30)) {
-        serial_print("ApolloOS: apollo_driver_load - calling polaris_init\n");
+        serial_print("AgnusOS: apollo_driver_load - calling polaris_init\n");
         struct polaris_dev pdev;
         if (polaris_init(&pdev, dev->pci_bus, dev->pci_dev, dev->pci_func) == 0) {
-            serial_print("ApolloOS: apollo_driver_load - polaris_init OK, calling polaris_set_mode\n");
+            serial_print("AgnusOS: apollo_driver_load - polaris_init OK, calling polaris_set_mode\n");
             polaris_set_mode(&pdev, 1920, 1080, 32);
             polaris_test_pattern(&pdev);
             screen_log("OK", COLOR_LIGHT_GREEN, "Polaris hardware initialized (1920x1080x32).");
         } else {
-            serial_print("ApolloOS: apollo_driver_load - polaris_init FAILED\n");
+            serial_print("AgnusOS: apollo_driver_load - polaris_init FAILED\n");
         }
     } else {
-        serial_print("ApolloOS: apollo_driver_load - NOT Polaris (family=");
+        serial_print("AgnusOS: apollo_driver_load - NOT Polaris (family=");
         // Can't easily print, just note
-        serial_print("ApolloOS: apollo_driver_load - chip_family check failed\n");
+        serial_print("AgnusOS: apollo_driver_load - chip_family check failed\n");
     }
     
     // Initialize command ring
     ret = apollo_gpu_init_ring(priv);
     if (ret) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to initialize ring buffer");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to initialize ring buffer");
         goto err_fini_mem;
     }
     
     // Initialize fence manager
     ret = apollo_gpu_init_fence(priv);
     if (ret) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to initialize fence manager");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to initialize fence manager");
         goto err_fini_fence;
     }
     
     // Initialize interrupts
     ret = apollo_gpu_init_irq(priv);
     if (ret) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to initialize interrupts");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to initialize interrupts");
         goto err_fini_fence;
     }
     
     // Initialize KMS (if applicable)
     // apollo_gpu_init_kms(priv);
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Driver loaded successfully");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Driver loaded successfully");
     return 0;
     
 err_fini_irq:
@@ -442,7 +442,7 @@ static int apollo_driver_unload(struct drm_device *dev)
     if (!priv)
         return 0;
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Unloading driver");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Unloading driver");
     
     // FIXME: Wait for pending operations to complete
     
@@ -454,7 +454,7 @@ static int apollo_driver_unload(struct drm_device *dev)
     kfree(priv);
     dev->dev_private = NULL;
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Driver unloaded");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Driver unloaded");
 }
 
 static int apollo_driver_submit_command(struct drm_device *dev, void *cmd, size_t cmd_size)
@@ -485,7 +485,7 @@ static int apollo_driver_submit_command(struct drm_device *dev, void *cmd, size_
     
     if (space < cmd_dwords) {
         // Ring buffer full - in a real driver we'd wait or submit as IB
-        screen_log("WARN", COLOR_BROWN, "ApolloOS GPU: Ring buffer full");
+        screen_log("WARN", COLOR_BROWN, "AgnusOS GPU: Ring buffer full");
         return -ENOSPC;
     }
     
@@ -547,7 +547,7 @@ static int apollo_driver_wait_for_fence(struct drm_device *dev, uint32_t seqno, 
     
     // For simplicity in this initial implementation, we'll just return -ETIME
     // A real implementation would wait for interrupt or poll with timeout
-    screen_log("WARN", COLOR_BROWN, "ApolloOS GPU: Fence wait not fully implemented");
+    screen_log("WARN", COLOR_BROWN, "AgnusOS GPU: Fence wait not fully implemented");
     return -ETIME;
 }
 
@@ -570,7 +570,7 @@ static void apollo_driver_signal_fence(struct drm_device *dev, uint32_t seqno)
 static int apollo_driver_mode_set(struct drm_device *dev, uint32_t width, uint32_t height, uint32_t refresh_rate)
 {
     // FIXME: Implement actual mode setting
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Setting display mode");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Setting display mode");
     return 0;
 }
 
@@ -632,7 +632,7 @@ static int apollo_gpu_init_memory(struct apollo_gpu_priv *priv)
         priv->mem.vram_size = 8ULL * 1024 * 1024 * 1024; // 8GB
         priv->mem.gart_size = 512ULL * 1024 * 1024;     // 512MB
         
-        screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Polaris 30 - VRAM/GART initialized");
+        screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Polaris 30 - VRAM/GART initialized");
         // Existing generic memory setup for other chips
         priv->mem.vram_base = 0x00000000;
         priv->mem.vram_size = 256 * 1024 * 1024; // 256MB placeholder
@@ -660,7 +660,7 @@ static int apollo_gpu_init_ring(struct apollo_gpu_priv *priv)
     priv->ring.ring_size = 64 * 1024; // 64KB ring buffer
     void *ring_raw = kmalloc(priv->ring.ring_size + PAGE_SIZE - 1);
     if (!ring_raw) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to allocate ring buffer");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to allocate ring buffer");
         return -ENOMEM;
     }
     priv->ring.ring_buffer = (void*)(((uintptr_t)ring_raw + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
@@ -691,7 +691,7 @@ static int apollo_gpu_init_ring(struct apollo_gpu_priv *priv)
     // Create workqueue for ring processing
     priv->ring.wq = alloc_workqueue("apollo_ring", 0);
     if (!priv->ring.wq) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to allocate workqueue");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to allocate workqueue");
         kfree(priv->ring.wptr);
         kfree((void*)priv->ring.rptr);
         kfree(priv->ring.ring_buffer);
@@ -702,7 +702,7 @@ static int apollo_gpu_init_ring(struct apollo_gpu_priv *priv)
     // Initialize work struct for indirect buffer submission
     INIT_WORK(&priv->ring.ib_work, apollo_gpu_ring_submit_work);
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Ring buffer initialized");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Ring buffer initialized");
     return 0;
 }
 static void apollo_gpu_fini_ring(struct apollo_gpu_priv *priv)
@@ -743,13 +743,13 @@ static int apollo_gpu_init_fence(struct apollo_gpu_priv *priv)
     // Create workqueue for fence timeout handling
     priv->fence.wq = alloc_workqueue("apollo_fence", 0);
     if (!priv->fence.wq) {
-        screen_log("ERROR", COLOR_RED, "ApolloOS GPU: Failed to allocate fence workqueue");
+        screen_log("ERROR", COLOR_RED, "AgnusOS GPU: Failed to allocate fence workqueue");
         return -ENOMEM;
     }
     
     INIT_WORK(&priv->fence.timeout_work, apollo_gpu_fence_timeout_work);
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Fence manager initialized");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Fence manager initialized");
     return 0;
 }
 // Fence cleanup
@@ -777,7 +777,7 @@ static int apollo_gpu_init_irq(struct apollo_gpu_priv *priv)
     priv->irq.enabled = false;
     priv->irq.handler = NULL;
     
-    screen_log("INFO", COLOR_LIGHT_GREEN, "ApolloOS GPU: Interrupts initialized");
+    screen_log("INFO", COLOR_LIGHT_GREEN, "AgnusOS GPU: Interrupts initialized");
     return 0;
 }
 
@@ -801,7 +801,7 @@ static void apollo_gpu_ring_submit_work(struct work_struct *work)
     // 2. Submit it to the GPU
     // 3. Update the read pointer as the GPU consumes commands
     
-    screen_log("DEBUG", COLOR_CYAN, "ApolloOS GPU: Processing ring buffer work");
+    screen_log("DEBUG", COLOR_CYAN, "AgnusOS GPU: Processing ring buffer work");
     // Placeholder implementation
 }
 
@@ -813,7 +813,7 @@ static void apollo_gpu_fence_timeout_work(struct work_struct *work)
     if (!priv)
         return;
     
-    screen_log("WARN", COLOR_BROWN, "ApolloOS GPU: Fence timeout occurred");
+    screen_log("WARN", COLOR_BROWN, "AgnusOS GPU: Fence timeout occurred");
     // Handle timeout - maybe reset GPU or signal error
 }
 
@@ -832,6 +832,6 @@ void apollo_gpu_pci_remove(uint8_t bus, uint8_t dev, uint8_t func)
 module_init(apollo_driver_init);
 module_exit(apollo_driver_exit);
 
-MODULE_DESCRIPTION("ApolloOS Universal GPU Driver")
-MODULE_AUTHOR("ApolloOS Developers")
+MODULE_DESCRIPTION("AgnusOS Universal GPU Driver")
+MODULE_AUTHOR("AgnusOS Developers")
 MODULE_LICENSE("GPL")

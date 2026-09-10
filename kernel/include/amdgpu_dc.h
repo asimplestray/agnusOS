@@ -1,5 +1,5 @@
 /*
- * amdgpu_dc.h — Display Core nativo (Fase 4) para o amdgpu do ApolloOS.
+ * amdgpu_dc.h — Display Core nativo (Fase 4) para o amdgpu do AgnusOS.
  *
  * Porta a ESTRUTURA do Linux DC (dal core / resource / stream / link)
  * sobre o subset de display da emulação vgpu. Sem Audio/PSR/MST real:

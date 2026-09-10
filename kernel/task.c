@@ -65,13 +65,13 @@ static void fpu_nm_handler(struct interrupt_frame *frame __attribute__((unused))
 /* ================================================================== */
 
 void task_init(void) {
-    serial_print("ApolloOS: task_init entry\n");
+    serial_print("AgnusOS: task_init entry\n");
     task_struct_t *init_task = (task_struct_t *)kheap_alloc(sizeof(task_struct_t));
     if (!init_task) {
-        serial_print("ApolloOS: task_init - kheap_alloc failed\n");
+        serial_print("AgnusOS: task_init - kheap_alloc failed\n");
         return;
     }
-    serial_print("ApolloOS: task_init - task allocated\n");
+    serial_print("AgnusOS: task_init - task allocated\n");
 
     init_task->pid = next_pid++;
     init_task->tid = init_task->pid;
@@ -86,30 +86,18 @@ void task_init(void) {
     init_task->cwd = vfs_root;
 
     init_task->mm = (mm_struct_t *)kheap_alloc(sizeof(mm_struct_t));
-    serial_print("ApolloOS: task_init - mm allocated\n");
+    serial_print("AgnusOS: task_init - mm allocated\n");
     if (init_task->mm) {
         extern uint64_t kernel_pml4_phys;
         init_task->mm->pml4_phys = kernel_pml4_phys;
-        init_task->mm->start_code = init_task->mm->end_code = 0;
-        init_task->mm->start_data = init_task->mm->end_data = 0;
-        init_task->mm->start_brk = init_task->mm->brk = 0;
         init_task->mm->start_stack = 0;
         spinlock_init(&init_task->mm->lock);
-        serial_print("ApolloOS: task_init - mm spinlock init done\n");
+        serial_print("AgnusOS: task_init - mm spinlock init done\n");
         init_task->mm->refcount = 1;
     }
 
-    init_task->files = (files_struct_t *)kheap_alloc(sizeof(files_struct_t));
-    serial_print("ApolloOS: task_init - files allocated\n");
-    if (init_task->files) {
-        init_task->files->count = 0;
-        for (int i = 0; i < 256; i++) init_task->files->fd_array[i] = NULL;
-        spinlock_init(&init_task->files->lock);
-        serial_print("ApolloOS: task_init - files spinlock init done\n");
-    }
-
     init_task->kernel_stack = (uint64_t)kheap_alloc(16384) + 16384;
-    serial_print("ApolloOS: task_init - kernel_stack allocated\n");
+    serial_print("AgnusOS: task_init - kernel_stack allocated\n");
     init_task->user_stack = 0;
 
     init_task->rip = 0;
@@ -128,40 +116,39 @@ void task_init(void) {
     init_task->sig_recv = 0;
     init_task->sig_wait = 0;
     init_task->sig_except = 0;
-    serial_print("ApolloOS: task_init - signal bitmask init done\n");
+    serial_print("AgnusOS: task_init - signal bitmask init done\n");
 
     /* FPU */
-    serial_print("ApolloOS: task_init - before fpu_init\n");
-    serial_print("ApolloOS: task_init - skipped fpu_init\n");
-    serial_print("ApolloOS: task_init - calling fpu_save\n");
-    serial_print("ApolloOS: task_init - skipped fpu_save\n");
+    serial_print("AgnusOS: task_init - before fpu_init\n");
+    serial_print("AgnusOS: task_init - skipped fpu_init\n");
+    serial_print("AgnusOS: task_init - calling fpu_save\n");
+    serial_print("AgnusOS: task_init - skipped fpu_save\n");
     init_task->fpu_used = false;
 
-    serial_print("ApolloOS: task_init - waitqueue init done\n");
+    serial_print("AgnusOS: task_init - waitqueue init done\n");
 
     spinlock_init(&runqueue_lock.lock);
-    serial_print("ApolloOS: task_init - runqueue lock init done\n");
+    serial_print("AgnusOS: task_init - runqueue lock init done\n");
 
     init_task->ticks = 0;
     init_task->priority = 10;
     init_task->counter = 10;
     init_task->errno_val = 0;
     init_task->tty = console_tty;
-    init_task->pgid = init_task->pid;
     init_task->name[0] = 'I'; init_task->name[1] = 'n'; init_task->name[2] = 'i';
     init_task->name[3] = 't'; init_task->name[4] = 0;
 
     init_task->next = init_task;
     init_task->prev = init_task;
     task_list = init_task;
-    serial_print("ApolloOS: task_init - task linked\n");
+    serial_print("AgnusOS: task_init - task linked\n");
 
     current = init_task;
-    serial_print("ApolloOS: task_init - current set\n");
+    serial_print("AgnusOS: task_init - current set\n");
 
     /* Register #NM (Device Not Available) handler for lazy FPU restore */
     interrupts_register_handler(7, fpu_nm_handler);
-    serial_print("ApolloOS: task_init - FPU lazy restore (#NM handler) registered\n");
+    serial_print("AgnusOS: task_init - FPU lazy restore (#NM handler) registered\n");
 
     /* Enable CR0.TS so first FPU use triggers #NM for lazy init */
     __asm__ volatile(
@@ -198,9 +185,6 @@ task_struct_t *task_create(void (*entry)(void), uint64_t flags __attribute__((un
 
     task->mm = current->mm;
     if (task->mm) task->mm->refcount++;
-
-    task->files = current->files;
-    if (task->files) task->files->count++;
 
     task->kernel_stack = (uint64_t)kheap_alloc(16384) + 16384;
     task->user_stack = 0;
@@ -258,7 +242,6 @@ task_struct_t *task_create(void (*entry)(void), uint64_t flags __attribute__((un
     task->counter = 10;
     task->errno_val = 0;
     task->tty = console_tty;
-    task->pgid = task->pid;
     task->name[0] = 0;
 
     unsigned long irq_flags;

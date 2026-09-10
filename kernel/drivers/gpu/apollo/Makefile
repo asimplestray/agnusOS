@@ -1,4 +1,4 @@
-# Makefile for ApolloOS GPU driver
+# Makefile for AgnusOS GPU driver
 
 obj-y := apollo_drv.o
 

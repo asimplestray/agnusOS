@@ -10,12 +10,12 @@ struct netif *netif_list = NULL;
 struct netif *netif_default = NULL;
 
 void net_init(void) {
-    serial_print("ApolloOS: Initializing network stack\n");
+    serial_print("AgnusOS: Initializing network stack\n");
     arp_init();
     ip_init();
     icmp_init();
     udp_init();
-    serial_print("ApolloOS: Network stack initialized\n");
+    serial_print("AgnusOS: Network stack initialized\n");
 }
 
 struct netif *netif_alloc(const char *name) {
@@ -44,7 +44,7 @@ int netif_register(struct netif *dev) {
     
     spin_unlock_irqrestore(&dev->lock, flags);
     
-    serial_print("ApolloOS: Registered netif: ");
+    serial_print("AgnusOS: Registered netif: ");
     serial_print(dev->name);
     serial_print("\n");
     

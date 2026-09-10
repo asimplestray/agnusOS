@@ -1,5 +1,5 @@
 /*
- * GDT — Global Descriptor Table + TSS (64-bit ApolloOS)
+ * GDT — Global Descriptor Table + TSS (64-bit AgnusOS)
  *
  * We install 6 descriptors:
  *   0: null

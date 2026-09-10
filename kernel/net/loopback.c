@@ -38,7 +38,7 @@ struct netif *loopback_init(void) {
     
     netif_register(loopback_dev);
     
-    serial_print("ApolloOS: Loopback interface initialized (127.0.0.1)\n");
+    serial_print("AgnusOS: Loopback interface initialized (127.0.0.1)\n");
     
     return loopback_dev;
 }

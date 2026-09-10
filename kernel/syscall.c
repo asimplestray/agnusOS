@@ -56,10 +56,6 @@ void syscall_init(void) {
     syscall_table[AOS_Examine]      = (void *)aos_examine;
     syscall_table[AOS_ExamineDir]   = (void *)aos_examine_dir;
     syscall_table[AOS_Flush]        = (void *)aos_flush;
-    syscall_table[AOS_SetProcGroup] = (void *)aos_set_procgroup;
-    syscall_table[AOS_GetProcGroup] = (void *)aos_get_procgroup;
-    syscall_table[AOS_SetConProc]   = (void *)aos_set_conproc;
-    syscall_table[AOS_GetConProc]   = (void *)aos_get_conproc;
     syscall_table[AOS_CreateDir]    = (void *)aos_create_dir;
     syscall_table[AOS_DeleteDir]    = (void *)aos_delete_dir;
     syscall_table[AOS_DeleteFile]   = (void *)aos_delete_file;
@@ -540,53 +536,6 @@ int64_t aos_set_ioerr(int64_t err, struct interrupt_frame *frame) {
     if (!current) return -AOS_ERR_NOT_FOUND;
     current->errno_val = (int)err;
     return 0;
-}
-
-/* ================================================================== */
-/* Process groups (kept for TTY compat)                                 */
-/* ================================================================== */
-
-int64_t aos_set_procgroup(int64_t pid, int64_t pgid, struct interrupt_frame *frame) {
-    (void)frame;
-    if (!current) return -AOS_ERR_NOT_FOUND;
-    task_struct_t *target = current;
-    if (pid != 0) {
-        task_struct_t *t = task_list;
-        do {
-            if (t->pid == (uint64_t)pid) { target = t; break; }
-            t = t->next;
-        } while (t != task_list);
-    }
-    if (!target) return -AOS_ERR_NOT_FOUND;
-    if (pgid == 0) pgid = target->pid;
-    target->pgid = (uint64_t)pgid;
-    return 0;
-}
-
-int64_t aos_get_procgroup(int64_t pid, struct interrupt_frame *frame) {
-    (void)frame;
-    if (!current) return -AOS_ERR_NOT_FOUND;
-    if (pid == 0) return (int64_t)current->pgid;
-    task_struct_t *t = task_list;
-    do {
-        if (t->pid == (uint64_t)pid) return (int64_t)t->pgid;
-        t = t->next;
-    } while (t != task_list);
-    return -AOS_ERR_NOT_FOUND;
-}
-
-int64_t aos_set_conproc(int64_t fd, int64_t pgid, struct interrupt_frame *frame) {
-    (void)frame;
-    if (!console_tty) return -AOS_ERR_BAD_ARGUMENT;
-    if (pgid <= 0) return -AOS_ERR_BAD_ARGUMENT;
-    console_tty->fg_pgrp = (int)pgid;
-    return 0;
-}
-
-int64_t aos_get_conproc(int64_t fd, struct interrupt_frame *frame) {
-    (void)frame;
-    if (!console_tty) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)console_tty->fg_pgrp;
 }
 
 /* ================================================================== */

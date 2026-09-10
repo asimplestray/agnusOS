@@ -21,7 +21,7 @@ static spinlock_irq_t arp_lock = { SPINLOCK_INIT, 0 };
 
 void arp_init(void) {
     memset(arp_table, 0, sizeof(arp_table));
-    serial_print("ApolloOS: ARP initialized\n");
+    serial_print("AgnusOS: ARP initialized\n");
 }
 
 static struct arp_entry *arp_find(const uint8_t *ip) {

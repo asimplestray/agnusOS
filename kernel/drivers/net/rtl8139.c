@@ -225,7 +225,7 @@ int rtl8139_init(struct rtl8139_dev *dev, uint8_t bus, uint8_t dev_num, uint8_t 
     
     rtl8139_device = dev;
     
-    serial_print("ApolloOS: RTL8139 initialized at IO 0x");
+    serial_print("AgnusOS: RTL8139 initialized at IO 0x");
     char hex[] = "0123456789ABCDEF";
     char buf[5];
     buf[0] = hex[(dev->io_base >> 12) & 0xF];

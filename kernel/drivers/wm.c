@@ -85,7 +85,7 @@ void wm_draw_desktop(void) {
     fb_fill_rect(0, 31, screen_w, 1, FB_COLOR_ACCENT);
 
     // Left aligned OS name and branding
-    wm_draw_string(12, 8, "ApolloOS", FB_COLOR_ACCENT, 0, 1);
+    wm_draw_string(12, 8, "AgnusOS", FB_COLOR_ACCENT, 0, 1);
     wm_draw_string(88, 8, "|  System Desktop Shell (v0.2-Alpha)", FB_COLOR_WHITE, 0, 1);
     
     // Find active window for panel status

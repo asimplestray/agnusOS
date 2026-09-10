@@ -169,7 +169,7 @@ void assign_init(void)
     assign_set("Work", "/fat32");
     assign_set("C",    "/bin");
     assign_set("Devs", "/dev");
-    serial_print("ApolloOS: Assigns: Sys: Ram: Work: C: Devs:\n");
+    serial_print("AgnusOS: Assigns: Sys: Ram: Work: C: Devs:\n");
     screen_log("OK", COLOR_LIGHT_GREEN,
                "Assigns: Sys: Ram: Work: C: Devs: disponiveis.");
 }

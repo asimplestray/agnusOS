@@ -47,7 +47,7 @@ extern uint64_t multiboot_info;
 void kernel_main(void) {
     serial_init();
     log_init();
-    serial_print("ApolloOS: Starting kernel...\n");
+    serial_print("AgnusOS: Starting kernel...\n");
 
     if (multiboot_magic == MULTIBOOT2_MAGIC) {
         fb_init(multiboot_info);
@@ -55,24 +55,24 @@ void kernel_main(void) {
     
     screen_init();
     screen_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
-    screen_print("===== ApolloOS v0.2-Alpha (Texto/GOP) =====\n");
+    screen_print("===== AgnusOS v0.2-Alpha (Texto/GOP) =====\n");
     screen_print("Kernel x86_64 inicializado com sucesso\n\n");
-    serial_print("ApolloOS: screen_init done\n");
+    serial_print("AgnusOS: screen_init done\n");
 
     idt_init();
-    serial_print("ApolloOS: idt_init done\n");
+    serial_print("AgnusOS: idt_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "IDT carregada & PIC remapeado.");
 
     gdt_init();
-    serial_print("ApolloOS: gdt_init done\n");
+    serial_print("AgnusOS: gdt_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "GDT/TSS propria carregada.");
 
     screen_log("OK", COLOR_LIGHT_GREEN, "CPU 64-bit Long Mode ativa.");
-    serial_print("ApolloOS: Long mode confirmed\n");
+    serial_print("AgnusOS: Long mode confirmed\n");
 
     if (multiboot_magic == MULTIBOOT2_MAGIC) {
         pmm_init(multiboot_info);
-        serial_print("ApolloOS: pmm_init done\n");
+        serial_print("AgnusOS: pmm_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "PMM inicializado.");
 
         screen_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
@@ -81,31 +81,31 @@ void kernel_main(void) {
         screen_set_color(COLOR_WHITE, COLOR_BLACK);
 
         vmm_init();
-        serial_print("ApolloOS: vmm_init done\n");
+        serial_print("AgnusOS: vmm_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "VMM inicializado.");
 
         kheap_init();
-        serial_print("ApolloOS: kheap_init done\n");
+        serial_print("AgnusOS: kheap_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Kernel heap ok.");
 
         exec_init();
         dos_init();
 
         workqueue_init();
-        serial_print("ApolloOS: workqueue_init done\n");
+        serial_print("AgnusOS: workqueue_init done\n");
 
         vfs_init();
-        serial_print("ApolloOS: vfs_init done\n");
+        serial_print("AgnusOS: vfs_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "VFS inicializado (RamFS montado em /).");
 
         procfs_init();
-        serial_print("ApolloOS: procfs_init done\n");
+        serial_print("AgnusOS: procfs_init done\n");
 
         devfs_init();
-        serial_print("ApolloOS: devfs_init done\n");
+        serial_print("AgnusOS: devfs_init done\n");
 
         drm_init();
-        serial_print("ApolloOS: drm_init done\n");
+        serial_print("AgnusOS: drm_init done\n");
 
         /* Parse multiboot2 for initrd module */
         void *initrd_addr = NULL;
@@ -117,7 +117,7 @@ void kernel_main(void) {
                     struct multiboot_tag_module *mod = (struct multiboot_tag_module *)tag;
                     initrd_addr = (void *)(uintptr_t)mod->mod_start;
                     initrd_size = mod->mod_end - mod->mod_start;
-                    serial_print("ApolloOS: found MODULE tag\n");
+                    serial_print("AgnusOS: found MODULE tag\n");
                     break;
                 }
                 tag = (struct multiboot_tag *)(((uintptr_t)tag) + ((tag->size + 7) & ~7));
@@ -125,28 +125,28 @@ void kernel_main(void) {
         }
         
         if (!initrd_addr) {
-            serial_print("ApolloOS: WARNING - no MODULE tag found in multiboot2 info!\n");
+            serial_print("AgnusOS: WARNING - no MODULE tag found in multiboot2 info!\n");
         }
         
         /* Initialize firmware cache from initrd */
         firmware_cache_init(initrd_addr, initrd_size);
-        serial_print("ApolloOS: firmware_cache_init done\n");
+        serial_print("AgnusOS: firmware_cache_init done\n");
 
         /* Mount FAT32 partition on /fat32 */
         vfs_node_t *fat32_node = vfs_resolve("/fat32");
         if (fat32_node) {
             fat32_init_and_mount(fat32_node);
-            serial_print("ApolloOS: fat32_init_and_mount done\n");
+            serial_print("AgnusOS: fat32_init_and_mount done\n");
         }
         
         task_init();
-        serial_print("ApolloOS: task_init done\n");
+        serial_print("AgnusOS: task_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "Task scheduler ok.");
 
         workqueue_start_kworker();
         
         pci_enum();
-        serial_print("ApolloOS: pci_enum done\n");
+        serial_print("AgnusOS: pci_enum done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "PCI enumeration completa.");
 
         /* Initialize ACPI and IOMMU (after PCI enum, before DMA-heavy ops) */
@@ -156,9 +156,9 @@ void kernel_main(void) {
             if (count > 0) {
                 /* Initialize first IOMMU unit found */
                 if (vt_d_init(iommu_units[0].mmio_base) == 0) {
-                    serial_print("ApolloOS: VT-d IOMMU enabled\n");
+                    serial_print("AgnusOS: VT-d IOMMU enabled\n");
                 } else {
-                    serial_print("ApolloOS: VT-d init failed, using identity\n");
+                    serial_print("AgnusOS: VT-d init failed, using identity\n");
                 }
             }
         }
@@ -180,36 +180,36 @@ void kernel_main(void) {
     }
 
     timer_init(100);
-    serial_print("ApolloOS: timer_init done\n");
+    serial_print("AgnusOS: timer_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Timer PIT 100Hz.");
 
     rtc_init();
-    serial_print("ApolloOS: rtc_init done\n");
+    serial_print("AgnusOS: rtc_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "RTC/CMOS initialized.");
 
     keyboard_init();
     keyboard_set_layout(LAYOUT_ABNT2);
-    serial_print("ApolloOS: keyboard_init done\n");
+    serial_print("AgnusOS: keyboard_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Teclado PS/2 (ABNT2).");
 
     tty_init();
-    serial_print("ApolloOS: tty_init done\n");
+    serial_print("AgnusOS: tty_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "TTY line discipline initialized.");
     
     syscall_init();
-    serial_print("ApolloOS: syscall_init done\n");
+    serial_print("AgnusOS: syscall_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Tabela de syscalls inicializada.");
 
     net_init();
-    serial_print("ApolloOS: net_init done\n");
+    serial_print("AgnusOS: net_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Network stack initialized.");
 
     loopback_init();
-    serial_print("ApolloOS: loopback_init done\n");
+    serial_print("AgnusOS: loopback_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Loopback interface (127.0.0.1) up.");
 
     bsdsocket_init();
-    serial_print("ApolloOS: bsdsocket.library initialized\n");
+    serial_print("AgnusOS: bsdsocket.library initialized\n");
 
     for (int bus = 0; bus < 256; bus++) {
         for (int dev = 0; dev < 32; dev++) {
@@ -236,11 +236,11 @@ void kernel_main(void) {
             }
         }
     }
-    serial_print("ApolloOS: syscall_init done\n");
+    serial_print("AgnusOS: syscall_init done\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Tabela de syscalls inicializada.");
 
     __asm__ volatile("sti");
-    serial_print("ApolloOS: STI - interrupts enabled\n");
+    serial_print("AgnusOS: STI - interrupts enabled\n");
     screen_log("OK", COLOR_LIGHT_GREEN, "Interrupcoes habilitadas (STI).");
     
     /* Run DMA fence/resv tests */
@@ -260,16 +260,16 @@ void kernel_main(void) {
     amdgpu_init();
     screen_print("========================================================\n\n");
 
-    screen_print("\n>> ApolloOS pronto. Iniciando dogin shell...\n");
+    screen_print("\n>> AgnusOS pronto. Iniciando dogin shell...\n");
 
     /* Launch dogin shell as kthread */
     task_struct_t *dogin_task = task_create(dogin_main, 0);
     if (dogin_task) {
         dogin_task->fpu_used = false;
-        serial_print("ApolloOS: dogin shell started\n");
+        serial_print("AgnusOS: dogin shell started\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "dogin shell (AmigaDOS) iniciado.");
     } else {
-        serial_print("ApolloOS: dogin shell failed to start\n");
+        serial_print("AgnusOS: dogin shell failed to start\n");
         screen_log("WARN", COLOR_BROWN, "dogin shell falhou ao iniciar.");
     }
     while (1) {

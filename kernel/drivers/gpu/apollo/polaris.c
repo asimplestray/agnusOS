@@ -60,7 +60,7 @@ static uint32_t polaris_mmio_read(struct polaris_dev *dev, uint32_t reg) {
 }
 
 static void polaris_mmio_write(struct polaris_dev *dev, uint32_t reg, uint32_t val) {
-    serial_print("ApolloOS: polaris_mmio_write reg=0x");
+    serial_print("AgnusOS: polaris_mmio_write reg=0x");
     char hex[] = "0123456789ABCDEF";
     char buf[9];
     buf[0] = hex[(reg >> 28) & 0xF];
@@ -185,7 +185,7 @@ int polaris_init(struct polaris_dev *dev, uint8_t bus, uint8_t device, uint8_t f
 }
 
 int polaris_set_mode(struct polaris_dev *dev, uint32_t width, uint32_t height, uint32_t bpp) {
-    serial_print("ApolloOS: polaris_set_mode called\n");
+    serial_print("AgnusOS: polaris_set_mode called\n");
     dev->width = width;
     dev->height = height;
     dev->bpp = bpp;
@@ -259,7 +259,7 @@ void polaris_fill_rect(struct polaris_dev *dev, uint32_t x, uint32_t y, uint32_t
 }
 
 void polaris_test_pattern(struct polaris_dev *dev) {
-    serial_print("ApolloOS: polaris_test_pattern start\n");
+    serial_print("AgnusOS: polaris_test_pattern start\n");
     uint32_t *fb = (uint32_t *)dev->vram_virt;
     uint32_t pitch_pixels = dev->pitch / 4;
     
@@ -273,5 +273,5 @@ void polaris_test_pattern(struct polaris_dev *dev) {
             fb[y * pitch_pixels + x] = color;
         }
     }
-    serial_print("ApolloOS: polaris_test_pattern done\n");
+    serial_print("AgnusOS: polaris_test_pattern done\n");
 }

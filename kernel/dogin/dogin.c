@@ -707,7 +707,7 @@ static int cmd_info(const char *args){
 }
 static int cmd_version(const char *args){
     (void)args;
-    dogin_println("dogin 0.1 -- AmigaDOS-like shell para ApolloOS");
+    dogin_println("dogin 0.1 -- AmigaDOS-like shell para AgnusOS");
     dogin_println("  kernel v0.2-Alpha  exec 0.1  dos 0.1  intuition 0.1");
     dogin_println("  AOS_53 traps  Assign/MsgPort  Limine BIOS+UEFI");
     dogin_println("  .in scripts com ';' comentario");

@@ -1,5 +1,5 @@
 /*
- * compat_check.c — validação da camada de compatibilidade Linux->ApolloOS.
+ * compat_check.c — validação da camada de compatibilidade Linux->AgnusOS.
  *
  * Fase 2 Dev 4 — entrega: os headers kernel/include/compat/linux_*.h
  * compilam e se comportam 1:1 com as APIs nativas. Este TU instancia e
@@ -26,7 +26,7 @@
 /* module macros expandem para nada (uso em file scope, como no Linux) */
 module_init(compat_layer_test);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("ApolloOS compat layer check");
+MODULE_DESCRIPTION("AgnusOS compat layer check");
 
 struct compat_test_item {
     int value;

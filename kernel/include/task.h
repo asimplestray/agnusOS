@@ -56,56 +56,16 @@ typedef enum {
 #define SIGBIT_USER_6   SIGBIT(9)
 #define SIGBIT_USER_7   SIGBIT(10)
 
-/* Legacy POSIX compat aliases (map to signal bits for send_sig/force_sig) */
-#define NSIG    32
-#define SIGKILL   0
-#define SIGSEGV  11
-#define SIGINT    2
-#define SIGTSTP  20
-#define SIGSTOP  19
-#define SIGCONT  18
-#define SIGPIPE  13
-#define SIGCHLD  17
-#define SIGTERM  15
-#define SIGBUS    7
-#define SIGFPE    8
-#define SIGILL    4
-#define SIGABRT   6
-#define SIGQUIT   3
-#define SIGUSR1  10
-#define SIGUSR2  12
-#define SIGALRM  14
-
 /* ================================================================== */
 /* Memory structures                                                    */
 /* ================================================================== */
 
 typedef struct mm_struct {
     uint64_t pml4_phys;
-    uint64_t start_code, end_code;
-    uint64_t start_data, end_data;
-    uint64_t start_brk, brk;
     uint64_t start_stack;
     spinlock_t lock;
     int refcount;
 } mm_struct_t;
-
-/* ================================================================== */
-/* File structures                                                      */
-/* ================================================================== */
-
-typedef struct file {
-    vfs_node_t *node;
-    uint64_t offset;
-    int flags;
-    int refcount;
-} file_t;
-
-typedef struct files_struct {
-    file_t *fd_array[256];
-    int count;
-    spinlock_t lock;
-} files_struct_t;
 
 /* ================================================================== */
 /* Task structure — Exec bitmask model                                  */
@@ -123,7 +83,6 @@ typedef struct task_struct {
     struct task_struct *prev_sibling;
 
     mm_struct_t *mm;
-    files_struct_t *files;
 
     uint64_t kernel_stack;
     uint64_t user_stack;
@@ -162,9 +121,6 @@ typedef struct task_struct {
 
     /* bsdsocket.library SocketBase (per-task, AmigaOS convention) */
     struct SocketBase *socket_base;
-
-    /* Process group for TTY job control */
-    uint64_t pgid;
 
     /* Task name (AmigaOS-style) */
     char name[32];

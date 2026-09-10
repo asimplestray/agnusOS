@@ -1,5 +1,5 @@
 /*
- * amdgpu.h — amdgpu v0.1.0 MINIMAL (sem DC) para ApolloOS.
+ * amdgpu.h — amdgpu v0.1.0 MINIMAL (sem DC) para AgnusOS.
  *
  * Fase 3 do port GPU (ver GPU_PORTING_TASKS.md):
  *   Dev 1 — HW init + ASIC detect + rmmio + reg dump      (amdgpu_device.c)

@@ -13,7 +13,7 @@ static spinlock_irq_t udp_lock = { SPINLOCK_INIT, 0 };
 
 void udp_init(void) {
     memset(udp_socks, 0, sizeof(udp_socks));
-    serial_print("ApolloOS: UDP initialized\n");
+    serial_print("AgnusOS: UDP initialized\n");
 }
 
 struct udp_sock *udp_socket(int domain, int type, int protocol) {

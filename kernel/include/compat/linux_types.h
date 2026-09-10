@@ -5,7 +5,7 @@
  *
  * Convenção da compat layer (ver GPU_PORTING_STRATEGY.md seção 3):
  *   - Headers privados em kernel/include/compat/, wrappers finos 1:1 com as
- *     APIs nativas do ApolloOS.
+ *     APIs nativas do AgnusOS.
  *   - Nada de alocadores Linux (kmalloc/vmalloc já são nativos), nada de
  *     vazamento de abstrações para fora de drivers em port.
  */

@@ -543,5 +543,5 @@ void bsdsocket_task_exit(struct SocketBase *sb) {
 /* ------------------------------------------------------------------ */
 
 void bsdsocket_init(void) {
-    serial_print("ApolloOS: bsdsocket.library v1.0 initialized\n");
+    serial_print("AgnusOS: bsdsocket.library v1.0 initialized\n");
 }

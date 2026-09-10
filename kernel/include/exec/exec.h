@@ -5,7 +5,6 @@
 #include <spinlock.h>
 #include <exec/types.h>
 #include <exec/task.h>
-#include <exec/signal.h>
 #include <exec/library.h>
 
 /* Forward decl for task_struct_t used in exec API */
@@ -52,19 +51,11 @@ extern exec_base_t *SysBase;
 /* Exec API */
 void     exec_init(void);
 
-/* Task management */
-exec_task_t *exec_create_task(const char *name, int32_t priority,
-                               void (*entry)(void), uint32_t stacksize);
-void     exec_delete_task(exec_task_t *task);
-
 /* Scheduler control */
-void     exec_forbid(void);       /* disable preemption */
-void     exec_permit(void);       /* enable preemption */
 void     exec_disable(void);      /* disable interrupts (CLI) */
 void     exec_enable(void);       /* enable interrupts (STI) */
 
 /* Timing */
-void     exec_delay(uint32_t ticks);    /* sleep N ticks (1 tick = 10ms) */
 uint64_t exec_eclock(void);             /* ticks since boot */
 
 /* Memory */

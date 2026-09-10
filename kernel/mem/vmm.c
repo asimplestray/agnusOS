@@ -142,54 +142,6 @@ void vmm_unmap_page_in_pml4(uint64_t pml4_phys, uint64_t virt) {
     }
 }
 
-uint64_t vmm_clone_user_pml4(uint64_t parent_pml4_phys) {
-    uint64_t child_pml4_phys = vmm_create_pml4();
-    if (!child_pml4_phys) return 0;
-    
-    uint64_t *parent_pml4 = (uint64_t *)parent_pml4_phys;
-    
-    for (int i = 0; i < 256; i++) { // user space only
-        if (parent_pml4[i] & VMM_FLAG_PRESENT) {
-            uint64_t *parent_pdpt = (uint64_t *)(parent_pml4[i] & ~0xFFF);
-            for (int j = 0; j < 512; j++) {
-                if (parent_pdpt[j] & VMM_FLAG_PRESENT) {
-                    uint64_t *parent_pd = (uint64_t *)(parent_pdpt[j] & ~0xFFF);
-                    for (int k = 0; k < 512; k++) {
-                        if (parent_pd[k] & VMM_FLAG_PRESENT) {
-                            uint64_t *parent_pt = (uint64_t *)(parent_pd[k] & ~0xFFF);
-                            for (int l = 0; l < 512; l++) {
-                                if (parent_pt[l] & VMM_FLAG_PRESENT) {
-                                    uint64_t parent_page_phys = parent_pt[l] & ~0xFFF;
-                                    uint64_t flags = parent_pt[l] & 0xFFF;
-                                    
-                                    // Allocate a new page for the child
-                                    uint64_t child_page_phys = pmm_alloc_block();
-                                    if (!child_page_phys) {
-                                        // OOM, return what we have so far
-                                        return child_pml4_phys;
-                                    }
-                                    
-                                    // Copy parent page contents to child page
-                                    uint8_t *src = (uint8_t *)parent_page_phys;
-                                    uint8_t *dst = (uint8_t *)child_page_phys;
-                                    for (int m = 0; m < 4096; m++) {
-                                        dst[m] = src[m];
-                                    }
-                                    
-                                    // Map the page in the child's PML4
-                                    uint64_t virt = ((uint64_t)i << 39) | ((uint64_t)j << 30) | ((uint64_t)k << 21) | ((uint64_t)l << 12);
-                                    vmm_map_page_in_pml4(child_pml4_phys, virt, child_page_phys, flags);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return child_pml4_phys;
-}
-
 void vmm_free_pml4(uint64_t pml4_phys) {
     uint64_t *pml4 = (uint64_t *)pml4_phys;
     for (int i = 0; i < 256; i++) { // user space only
@@ -255,48 +207,6 @@ uint64_t vmm_get_phys(uint64_t pml4_phys, uint64_t virt)
 /* -------------------------------------------------------------------------
  * Page Fault Handler
  * ---------------------------------------------------------------------- */
-
-static inline uint64_t pte_flags(uint64_t pte) {
-    return pte & 0xFFF;
-}
-
-static inline uint64_t pte_phys(uint64_t pte) {
-    return pte & ~0xFFF;
-}
-
-static void handle_cow_fault(uint64_t pml4_phys, uint64_t virt, uint64_t pte) {
-    uint64_t phys = pte_phys(pte);
-    uint64_t flags = pte_flags(pte);
-
-    /* Allocate new page */
-    uint64_t new_phys = pmm_alloc_block();
-    if (!new_phys) {
-        screen_log("FAIL", COLOR_LIGHT_RED, "COW: OOM allocating new page");
-        return;
-    }
-
-    /* Copy contents */
-    uint8_t *src = (uint8_t *)phys;
-    uint8_t *dst = (uint8_t *)new_phys;
-    for (int i = 0; i < 4096; i++) dst[i] = src[i];
-
-    /* Update PTE: new phys, clear COW, set WRITE, keep USER/PRESENT/NX */
-    uint64_t new_flags = (flags & ~VMM_FLAG_COW) | VMM_FLAG_WRITE | VMM_FLAG_PRESENT | VMM_FLAG_USER;
-    if (flags & VMM_FLAG_NX) new_flags |= VMM_FLAG_NX;
-
-    uint64_t pml4_idx = (virt >> 39) & 0x1FF;
-    uint64_t pdpt_idx = (virt >> 30) & 0x1FF;
-    uint64_t pd_idx   = (virt >> 21) & 0x1FF;
-    uint64_t pt_idx   = (virt >> 12) & 0x1FF;
-
-    uint64_t *pml4 = (uint64_t *)pml4_phys;
-    uint64_t *pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
-    uint64_t *pd   = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
-    uint64_t *pt   = (uint64_t*)(pd[pd_idx] & ~0xFFF);
-
-    pt[pt_idx] = (new_phys & ~0xFFF) | new_flags;
-    vmm_tlb_flush(virt);
-}
 
 static void handle_demand_page_fault(uint64_t pml4_phys, uint64_t virt, uint64_t flags, uint64_t error_code) {
     uint64_t phys = pmm_alloc_block();
@@ -374,7 +284,7 @@ void vmm_page_fault_handler(uint64_t fault_addr, uint64_t error_code, uint64_t r
     uint64_t pte = pt[pt_idx];
 
     if (!(pte & VMM_FLAG_PRESENT)) {
-        /* Page not present - could be demand paging, COW, or stack growth */
+        /* Page not present - could be demand paging or stack growth */
         if (current && current->mm) {
             /* Check for stack growth */
             uint64_t stack_top = current->mm->start_stack;
@@ -384,12 +294,6 @@ void vmm_page_fault_handler(uint64_t fault_addr, uint64_t error_code, uint64_t r
             }
         }
         handle_demand_page_fault(pml4_phys, virt, 0, error_code);
-        return;
-    }
-
-    /* Page present - check for COW */
-    if ((pte & VMM_FLAG_COW) && (error_code & PF_ERR_W)) {
-        handle_cow_fault(pml4_phys, virt, pte);
         return;
     }
 
@@ -405,35 +309,4 @@ void vmm_page_fault_handler(uint64_t fault_addr, uint64_t error_code, uint64_t r
     screen_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
     screen_print("\n!!! KERNEL PAGE FAULT: PROTECTION VIOLATION !!!\n");
     while (1) __asm__ volatile("hlt");
-}
-
-/* -------------------------------------------------------------------------
- * COW Support: Mark user pages as COW during fork
- * ---------------------------------------------------------------------- */
-
-void vmm_mark_cow_user_pages(uint64_t pml4_phys)
-{
-    uint64_t *pml4 = (uint64_t *)pml4_phys;
-    for (int i = 0; i < 256; i++) { /* user space only */
-        if (!(pml4[i] & VMM_FLAG_PRESENT)) continue;
-        uint64_t *pdpt = (uint64_t*)(pml4[i] & ~0xFFF);
-        for (int j = 0; j < 512; j++) {
-            if (!(pdpt[j] & VMM_FLAG_PRESENT)) continue;
-            uint64_t *pd = (uint64_t*)(pdpt[j] & ~0xFFF);
-            for (int k = 0; k < 512; k++) {
-                if (!(pd[k] & VMM_FLAG_PRESENT)) continue;
-                uint64_t *pt = (uint64_t*)(pd[k] & ~0xFFF);
-                for (int l = 0; l < 512; l++) {
-                    uint64_t pte = pt[l];
-                    if (pte & VMM_FLAG_PRESENT) {
-                        /* Only mark writable user pages as COW */
-                        if ((pte & VMM_FLAG_WRITE) && (pte & VMM_FLAG_USER)) {
-                            /* Clear WRITE, set COW */
-                            pt[l] = (pte & ~VMM_FLAG_WRITE) | VMM_FLAG_COW;
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

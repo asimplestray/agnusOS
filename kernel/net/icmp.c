@@ -5,7 +5,7 @@
 #include <serial.h>
 
 void icmp_init(void) {
-    serial_print("ApolloOS: ICMP initialized\n");
+    serial_print("AgnusOS: ICMP initialized\n");
 }
 
 int icmp_send_echo_reply(struct netif *dev, const struct ip_hdr *iph, const struct icmp_hdr *icmph) {

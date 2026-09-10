@@ -109,7 +109,6 @@ typedef struct tty_struct {
     wait_queue_head_t write_wait;
     
     termios_t termios;
-    int fg_pgrp;  /* Foreground process group */
     
     /* Output buffer */
     char out_buf[TTY_BUF_SIZE];
@@ -132,8 +131,5 @@ void tty_handle_ctrl_z(tty_struct_t *tty);
 void tty_handle_ctrl_d(tty_struct_t *tty);
 void tty_handle_backspace(tty_struct_t *tty);
 int tty_ioctl(tty_struct_t *tty, uint64_t request, void *arg);
-
-/* Check if process is in foreground process group */
-int tty_check_fg(tty_struct_t *tty, task_struct_t *task);
 
 #endif

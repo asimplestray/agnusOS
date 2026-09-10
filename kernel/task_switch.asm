@@ -1,4 +1,4 @@
-;; task_switch.S — Assembly context switch for ApolloOS
+;; task_switch.S — Assembly context switch for AgnusOS
 ;;
 ;; void context_switch(task_struct_t *prev, task_struct_t *next);
 ;;   rdi = prev, rsi = next

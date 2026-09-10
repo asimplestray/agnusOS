@@ -118,7 +118,7 @@ void rtc_init(void) {
     rtc_initialized = true;
     spin_unlock_irqrestore(&rtc_lock, flags);
 
-    serial_print("ApolloOS: RTC initialized\n");
+    serial_print("AgnusOS: RTC initialized\n");
 }
 
 uint64_t rtc_get_epoch_seconds(void) {

@@ -32,7 +32,7 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o build/bsdsocket.o \
       build/drm_gem.o \
       build/assign.o build/msgport.o \
-      build/exec.o build/exec_signal.o build/exec_library.o \
+      build/exec.o build/exec_library.o \
       build/dos.o build/dos_path.o \
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
@@ -44,8 +44,8 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/acpi.o build/iommu.o
 
 # Output
-ISO_OUT = apolloos.iso
-BIN_OUT = build/iso/boot/apolloos.bin
+ISO_OUT = agnusos.iso
+BIN_OUT = build/iso/boot/agnusos.bin
 FW_CPIO = build/fw.cpio
 
 .PHONY: all clean run
@@ -423,12 +423,7 @@ build/msgport.o: kernel/ipc/msgport.c kernel/include/msgport.h
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
-build/exec.o: kernel/exec/exec.c kernel/include/exec/exec.h kernel/include/exec/task.h kernel/include/exec/signal.h kernel/include/exec/library.h kernel/include/exec/types.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/exec_signal.o: kernel/exec/signal.c kernel/include/exec/signal.h kernel/include/exec/task.h kernel/include/exec/exec.h
+build/exec.o: kernel/exec/exec.c kernel/include/exec/exec.h kernel/include/exec/task.h kernel/include/exec/library.h kernel/include/exec/types.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
@@ -468,13 +463,13 @@ clean:
 	@rm -rf build $(ISO_OUT)
 
 run: all
-	@echo ">> Running ApolloOS in QEMU (requires qemu-desktop for GUI)..."
+	@echo ">> Running AgnusOS in QEMU (requires qemu-desktop for GUI)..."
 	@test -f disk.img || qemu-img create -q -f raw disk.img 64M
 	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -drive if=none,format=raw,id=disk0,file=disk.img -device virtio-blk-pci,drive=disk0 -vga std -display sdl
 
 # Fallback: VNC display (connect with: vncviewer localhost:5900)
 run-vnc: all
-	@echo ">> Running ApolloOS via VNC on localhost:5900 ..."
+	@echo ">> Running AgnusOS via VNC on localhost:5900 ..."
 	@echo "   Connect with: vncviewer localhost:5900"
 	@test -f disk.img || qemu-img create -q -f raw disk.img 64M
 	qemu-system-x86_64 -m 512M -cdrom $(ISO_OUT) -drive if=none,format=raw,id=disk0,file=disk.img -device virtio-blk-pci,drive=disk0 -vga std -vnc :0

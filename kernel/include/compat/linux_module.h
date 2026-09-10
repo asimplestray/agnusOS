@@ -3,7 +3,7 @@
  *
  * Fase 2 Dev 4 — Camada de Compatibilidade.
  *
- * O ApolloOS não tem carregamento de módulos: código em port usa estas
+ * O AgnusOS não tem carregamento de módulos: código em port usa estas
  * macros para compilar sem patch. (Substitui os #define locais que o
  * apollo_drv.c carregava manualmente.)
  */

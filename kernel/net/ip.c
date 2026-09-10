@@ -7,7 +7,7 @@
 static uint16_t ip_id_counter = 1;
 
 void ip_init(void) {
-    serial_print("ApolloOS: IP initialized\n");
+    serial_print("AgnusOS: IP initialized\n");
 }
 
 uint8_t *ip_local_addr(struct netif *dev) {

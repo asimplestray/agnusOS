@@ -40,7 +40,6 @@ void tty_init(void) {
     console_tty->raw_tail = 0;
     console_tty->out_head = 0;
     console_tty->out_tail = 0;
-    console_tty->fg_pgrp = 1;  /* init process group */
     console_tty->next = NULL;
     
     init_waitqueue_head(&console_tty->read_wait);
@@ -237,14 +236,10 @@ void tty_handle_ctrl_c(tty_struct_t *tty) {
         screen_print("^C\r\n");
     }
     
-    /* Send SIGINT (Ctrl+C) to foreground process group */
-    task_struct_t *t = task_list;
-    do {
-        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_SUSPENDED) {
-            force_sig(SIGBIT_BREAK, t);
-        }
-        t = t->next;
-    } while (t != task_list);
+    /* Send SIGBREAKF_CTRL_C (AmigaOS Ctrl+C) to current task */
+    if (current && current->state != TASK_STATE_SUSPENDED) {
+        force_sig(SIGBIT_BREAK, current);
+    }
 }
 
 void tty_handle_ctrl_z(tty_struct_t *tty) {
@@ -254,14 +249,10 @@ void tty_handle_ctrl_z(tty_struct_t *tty) {
         screen_print("^Z\r\n");
     }
     
-    /* Send SIGTSTP (Ctrl+Z) to foreground process group */
-    task_struct_t *t = task_list;
-    do {
-        if (t->pgid == (uint64_t)tty->fg_pgrp && t->state != TASK_STATE_SUSPENDED) {
-            force_sig(SIGBIT_SUSPEND, t);
-        }
-        t = t->next;
-    } while (t != task_list);
+    /* Send SIGBREAKF_CTRL_Z (AmigaOS Ctrl+Z) to current task */
+    if (current && current->state != TASK_STATE_SUSPENDED) {
+        force_sig(SIGBIT_SUSPEND, current);
+    }
 }
 
 void tty_handle_ctrl_d(tty_struct_t *tty) {
@@ -377,24 +368,7 @@ int tty_ioctl(tty_struct_t *tty, uint64_t request, void *arg) {
             }
             return 0;
         }
-        case TIOCGPGRP: {
-            int *pgrp = (int *)arg;
-            if (!pgrp) return -EFAULT;
-            *pgrp = tty->fg_pgrp;
-            return 0;
-        }
-        case TIOCSPGRP: {
-            int pgrp = (int)(uintptr_t)arg;
-            if (pgrp <= 0) return -EINVAL;
-            tty->fg_pgrp = pgrp;
-            return 0;
-        }
         default:
             return -ENOTTY;
     }
-}
-
-int tty_check_fg(tty_struct_t *tty, task_struct_t *task) {
-    if (!tty || !task) return 0;
-    return task->pgid == (uint64_t)tty->fg_pgrp;
 }

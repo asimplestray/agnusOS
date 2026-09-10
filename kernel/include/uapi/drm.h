@@ -1,4 +1,4 @@
-/* uapi/drm.h — ABI estável userspace/kernel para DRM (ApolloOS uAPI 1.0)
+/* uapi/drm.h — ABI estável userspace/kernel para DRM (AgnusOS uAPI 1.0)
  *
  * Congelado em PRE_AMDGPU_TASKS.md:P3 antes de copiar drivers/gpu/drm/amd 6.6.
  * Regra: nunca quebrar numeric ABI; novas features via novo ioctl ou extensão

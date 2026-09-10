@@ -285,7 +285,7 @@ vfs_node_t *ramfs_readdir_node(ramfs_node_t *dir, uint32_t index)
  * the kernel can run a real Ring-3 process without needing a userspace
  * compiler or initrd.
  *
- * Syscall numbers (ApolloOS):
+ * Syscall numbers (AgnusOS):
  *   SYS_WRITE = 3   (fd=1, buf=ptr, count=len)
  *   SYS_EXIT  = 0   (code=0)
  *
@@ -386,7 +386,7 @@ vfs_node_t *ramfs_init(void)
     ramfs_attach(root, etc);
 
     /* /etc/version */
-    static const uint8_t version_txt[] = "ApolloOS v0.3-Alpha\n";
+    static const uint8_t version_txt[] = "AgnusOS v0.3-Alpha\n";
     ramfs_node_t *ver = ramfs_mkfile_node("version",
                                           version_txt,
                                           sizeof(version_txt) - 1);
