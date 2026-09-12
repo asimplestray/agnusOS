@@ -1,46 +1,44 @@
-# ApolloOS uAPI 1.0 — ABI estável antes do porte amdgpu 6.6
+# AgnusOS uAPI 1.0
 
-> **Congelado:** `kernel/include/uapi/` `uapi-1.0` `2026-09-04` `PRE_AMDGPU_TASKS.md:P3` **antes** de copiar `drivers/gpu/drm/amd` `6.6`. Regra: nunca quebrar número/struct; extensão via `version`/`pad` ou novo `ioctl`.
+> A fonte canônica da ABI pública é `kernel/include/uapi/`. Números existentes nunca podem ser reutilizados ou deslocados. Estruturas públicas só podem ser estendidas por campos versionados e reservados, ou substituídas por uma nova operação.
 
 ## Versionamento
 
-| Componente | Header | Versão | Tag |
-|---|---|---|---|
-| DRM core | `kernel/include/uapi/drm.h` | `1.0` | `uapi-1.0` |
-| amdgpu | `kernel/include/uapi/amdgpu_drm.h` | `1.0` | `uapi-1.0` |
-| AOS traps | `kernel/include/uapi/aos.h` | `1.0` | `uapi-1.0` |
+| Componente | Header | Versão |
+|---|---|---|
+| DRM core | `kernel/include/uapi/drm.h` | `1.0` |
+| AgnusOS traps | `kernel/include/uapi/aos.h` | `1.0` |
 
-`DRM_UAPI_VERSION_MAJOR` `AMDGPU_UAPI_VERSION_MAJOR` `AOS_UAPI_VERSION_MAJOR` — bump major quebra ABI, minor adiciona compat.
+`DRM_UAPI_VERSION_MAJOR` e `AOS_UAPI_VERSION_MAJOR` — bump major quebra ABI, minor adiciona compat.
 
 ## Mapa
 
 ```
 kernel/include/uapi/
-  drm.h          — DRM_IOCTL_BASE 'd' 0x00-0xA3 (VERSION/GEM/PRIME/KMS atomic) + GEM_DOMAIN_* + drm_version
-  amdgpu_drm.h   — CHIP 0x67DF/0x6FDF/0x73DF + GEM_CREATE + GFX PACKET3 + FW blobs + DC modes + AMDGPU_INFO addrs
-  aos.h          — AOS_0..52 traps + O_RDONLY/CREAT + Assign/MsgPort structs
+  drm.h          — DRM_IOCTL_BASE 'd', ioctls esparsos 0x00,0x02,0x40-0x43,0xA0-0xA3 (VERSION/GET_MAGIC/GEM/PRIME/KMS atomic) + GEM_DOMAIN_* + drm_version
+  aos.h          — mapa canônico de 66 traps 0-65, flags, Assign e MsgPort
 
 kernel/include/
-  drm/           — internal (não uAPI): drm_device.h:69, drm_gem.h:22
+  drm/           — internal (não uAPI): drm_device.h, drm_gem.h (não citar contagem de linhas aqui — muda sempre)
   compat/        — thin wrappers linux_*.h (não exposto)
 ```
 
 ## Regras
 
-1. **Numeric ABI idêntico** `c32c427`: `AOS_Exit 0` == antigo `SYS_EXIT 0` (`kernel/include/syscall.h:109` compat `SYS_*` alias), `46-52` `Assign/MsgPort` novos em `c32c427` (`f9b3068`).
-2. **Structs versionadas:** `drm_version` tem `name_len/date_len`, `drm_amdgpu_gem_create_in` tem `alignment/flags/pad`, `aos_msg` `128B` fixo.
-3. **Ioctl nunca muda número:** `DRM_IOCTL_GEM_CREATE 0x40` + `DRM_AMDGPU_GEM_CREATE 0x40` etc. Novos em `0x41+`.
-4. **Compat:** `kernel/include/uapi/aos.h` define `SYS_*` aliases para código antigo compilar; `kernel/syscall.c:34` dispacha `AOS_*` e `SYS_*` mesmo handler (`aos_*`).
-5. **Firmware:** `AMDGPU_FW_*` `amdgpu/polaris10_* 17044` `scripts/make_fw_initrd.sh:8` versão `v0xeb` documentada, não ABI mas `uapi` lista nomes estáveis.
+1. **Mapa único:** `kernel/include/uapi/aos.h` é a única definição numérica das traps. O header interno apenas o inclui.
+2. **Extensão por append:** as traps 0 a 60 permanecem nos números publicados. Memory pools ocupam 61 a 65.
+3. **Layouts protegidos:** `aos_msg` possui payload de 128 bytes e tamanho total de 140 bytes, verificado por `_Static_assert`.
+4. **Flags estáveis:** os valores de `AOS_O_*` existem somente no header público e são consumidos pelo kernel sem uma segunda definição conflitante.
+5. **Ioctls estáveis:** DRM usa codificação `_IOC` compatível com Linux. O dispatcher extrai o número do comando antes de consultar suas tabelas.
+6. **Compatibilidade de fonte:** aliases `SYS_*` preservam a compilação de aplicações antigas. Eles não constituem um segundo mapa em runtime.
 
 ## Uso
 
 ```c
 #include <uapi/drm.h>
-#include <uapi/amdgpu_drm.h>
 #include <uapi/aos.h>
 
-int fd = aos_open("Work:docs/readme", AOS_O_RDONLY, 0, frame); // Assign expande Work: -> /fat32
+int fd = aos_open("Work:docs/readme", AOS_O_RDONLY, frame); // Assign expande Work: -> /fat32
 int port = aos_create_port("MyPort", frame);
 struct aos_msg m = {.code=1, .size=4}; memcpy(m.payload, "hi", 4);
 aos_put_msg(port, &m, frame);
@@ -49,14 +47,29 @@ struct drm_gem_create gc = {.size=4096, .domain=GEM_DOMAIN_VRAM};
 ioctl(fd, DRM_IOCTL_GEM_CREATE, &gc); // handle em gc.handle
 ```
 
-## Compat com porte amdgpu 6.6
+> Assinatura real: `aos_open(name, mode, frame)` — 3 args (`kernel/include/syscall.h`, `kernel/syscall.c`). `AOS_SetProcGroup/GetProcGroup/SetConProc/GetConProc` (28-31) publicados mas sem dispatch (retornam `NOT_FOUND`).
 
-- `drivers/gpu/drm/amd` `6.6` deve incluir apenas `uapi/*.h`, nunca `kernel/include/drm/*` internal.
-- `compat/linux_*.h` `kernel/include/compat/` mapeia `dma_fence` `workqueue` para `drm_sched` sem vazar `kmalloc` — `GPU_PORTING_STRATEGY.md:82`.
-- Teste `libdrm` `amdgpu` `radv` contra `uapi-1.0` headers antes do `port`.
+## Futuro porte de drivers Linux
 
-## Histórico
+- Drivers importados devem consumir contratos públicos ou a camada de compatibilidade, sem depender acidentalmente de detalhes internos do AgnusOS.
+- `compat/linux_*.h` em `kernel/include/compat/` é uma camada privada do kernel e não faz parte da uAPI.
+- Compatibilidade com libdrm ou drivers específicos só deve ser anunciada depois de testes userspace automatizados passarem.
 
-- `f18c8f4` Unix `46` `SYS_*`
-- `c32c427` Amiga `53` `AOS_*` + `Assign/MsgPort` `f9b3068` `NR 53`
-- `uapi-1.0` congela `53` + `GEM/PRIME/KMS` + `amdgpu` `1.0`
+## Política de release
+
+- Uma tag `uapi-X.Y` só pode ser criada após build limpo e testes ABI userspace.
+- Alterações incompatíveis exigem aumento de `MAJOR` e um período explícito de migração.
+- Novas operações compatíveis incrementam `MINOR` e usam números ainda não publicados.
+- Cada release deve arquivar os headers públicos e os resultados dos testes de layout e ioctl.
+
+## Verificação automatizada
+
+Execute `make abi-check` antes de qualquer release. O teste userspace
+`tests/uapi_abi.c` compila os headers públicos ativos juntos e trava um
+subset do contrato: traps-chave (`Exit/DoIO/FindTask/Assign/ReplyMsg/Select/
+RecvFrom/CreatePool/PoolAvail/NR`), 3 aliases `SYS_*`, flags `AOS_O_*`,
+números de ioctls DRM e 2 layouts DRM. Não cobre as 66 traps — cobertura total
+ainda pendente (ver `docs/PRODUCTION_READINESS.md`).
+
+Esse teste protege o contrato já publicado, mas não substitui testes funcionais
+abrindo `/dev/dri/cardN` e exercitando GEM, PRIME e KMS.
