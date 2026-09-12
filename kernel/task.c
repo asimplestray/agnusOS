@@ -6,6 +6,7 @@
 #include <idt.h>
 #include <serial.h>
 #include <tty.h>
+#include <panic.h>
 
 #define kheap_alloc(size) kmalloc(size)
 #define kheap_free(ptr) kfree(ptr)
@@ -91,9 +92,10 @@ void task_init(void) {
         extern uint64_t kernel_pml4_phys;
         init_task->mm->pml4_phys = kernel_pml4_phys;
         init_task->mm->start_stack = 0;
-        spinlock_init(&init_task->mm->lock);
+        spinlock_init(&init_task->mm->lock.lock);
         serial_print("AgnusOS: task_init - mm spinlock init done\n");
         init_task->mm->refcount = 1;
+        init_task->mm->vmas = NULL;
     }
 
     init_task->kernel_stack = (uint64_t)kheap_alloc(16384) + 16384;
@@ -260,7 +262,10 @@ task_struct_t *task_create(void (*entry)(void), uint64_t flags __attribute__((un
 /* ================================================================== */
 
 void task_exit(int code) {
-    if (!current) return;
+    if (!current) {
+        PANIC("task_exit called without a current task");
+        __builtin_unreachable();
+    }
 
     unsigned long flags;
     RUNQUEUE_LOCK(flags);
@@ -270,18 +275,32 @@ void task_exit(int code) {
     current->sig_recv |= SIGBIT_END;
 
     if (current->mm) {
-        current->mm->refcount--;
-        if (current->mm->refcount == 0) {
+        mm_struct_t *mm = current->mm;
+        current->mm = NULL;
+        mm->refcount--;
+        if (mm->refcount == 0) {
             extern uint64_t kernel_pml4_phys;
-            if (current->mm->pml4_phys != 0 && current->mm->pml4_phys != kernel_pml4_phys) {
-                vmm_free_pml4(current->mm->pml4_phys);
+            if (mm->pml4_phys != 0 && mm->pml4_phys != kernel_pml4_phys) {
+                /* The exiting task may still be running on this address space.
+                 * Switch to the permanent kernel page table before releasing
+                 * any paging structures referenced by CR3. Kernel stacks and
+                 * scheduler code are present in the shared kernel mappings. */
+                vmm_activate_pml4(kernel_pml4_phys);
+                vmm_free_pml4(mm->pml4_phys);
             }
-            kfree(current->mm);
+            vma_clear(mm);
+            kfree(mm);
         }
     }
 
     RUNQUEUE_UNLOCK(flags);
     schedule();
+
+    /* A suspended task is never eligible to run again. Reaching this point
+     * would otherwise return through a syscall or exception frame belonging to
+     * a task whose address space may already have been destroyed. */
+    PANIC("task_exit returned for task %d", current ? current->pid : 0);
+    __builtin_unreachable();
 }
 
 /* ================================================================== */
@@ -349,6 +368,17 @@ void schedule(void) {
     current = next;
     current->counter = current->priority;
 
+    /* Activate the incoming address space before switching stacks. This is
+     * required for newly-created tasks because their first context switch
+     * returns directly into task_trampoline() and never executes the resumed
+     * schedule() continuation below. The outgoing kernel stack remains usable
+     * because kernel mappings are shared by every process PML4. */
+    extern uint64_t kernel_pml4_phys;
+    uint64_t target_cr3 = kernel_pml4_phys;
+    if (current->mm && current->mm->pml4_phys != 0)
+        target_cr3 = current->mm->pml4_phys;
+    vmm_activate_pml4(target_cr3);
+
     /* Release the run-queue lock BEFORE switching stacks.
      * The target task may need to acquire this lock when it
      * eventually calls schedule() itself. */
@@ -372,15 +402,6 @@ void schedule(void) {
 
     RUNQUEUE_UNLOCK(flags);
 
-    extern uint64_t kernel_pml4_phys;
-    uint64_t target_cr3 = kernel_pml4_phys;
-    if (current->mm && current->mm->pml4_phys != 0)
-        target_cr3 = current->mm->pml4_phys;
-
-    uint64_t current_cr3;
-    __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
-    if (current_cr3 != target_cr3)
-        __asm__ volatile("mov %0, %%cr3" : : "r"(target_cr3) : "memory");
 }
 
 /* ================================================================== */

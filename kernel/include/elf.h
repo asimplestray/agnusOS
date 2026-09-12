@@ -64,9 +64,14 @@ typedef struct {
  * Validate and load an ELF64 static executable from memory into a specific PML4.
  *
  * Maps each PT_LOAD segment into the target process's address space.
+ * When mm is non-NULL, each segment is also registered as a VMA so page
+ * faults can be authorized against it. W^X: non-executable segments get NX.
  *
  * Returns the entry point virtual address on success, 0 on failure.
  */
+struct mm_struct;
 uint64_t elf_load(uint64_t pml4_phys, const uint8_t *data, uint32_t size);
+uint64_t elf_load_mm(uint64_t pml4_phys, const uint8_t *data, uint32_t size,
+                     struct mm_struct *mm);
 
 #endif

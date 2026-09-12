@@ -135,7 +135,7 @@ Em todo boot: `drm_gem_test` + `dma_test_run_all` + `assign_test`/`msgport_test`
 
 | Subsystem | Status |
 |-----------|--------|
-| Memory (PMM/VMM/kheap) | ⚠️ Funcional, sem VMA/isolamento provado |
+| Memory (PMM/VMM/kheap) | ⚠️ VMA + W^X hardening + heap expansível; sem ASLR/slab, sem testes de estresse |
 | Scheduler (round-robin + timer, FPU lazy) | ⚠️ Funcional, preempção/cooperatividade em revisão |
 | Signal bitmask (32-bit) | ⚠️ Estrutura ok, falta atomicidade/wakeup formal |
 | **Wait blocking real (timeout)** | ⚠️ Funcional (TASK_WAITING + timer), com timer no stack — revisar lifetime |

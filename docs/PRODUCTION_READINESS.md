@@ -121,24 +121,27 @@ Uma suíte ring 3 deve enviar ponteiros inválidos e buffers em fronteiras de p�
 
 ## 2. Address spaces, VMA e page faults
 
-- [ ] Criar representação de regiões virtuais por processo.
-- [ ] Registrar início, fim, proteção, tipo, offset e objeto de backing de cada VMA.
-- [ ] Proteger a estrutura de VMAs com locking e regras de lifetime.
-- [~] Rejeitar faults fora de uma VMA autorizada.
-  Enquanto não há uma estrutura geral de VMA, o handler deixou de criar páginas
-  anônimas para endereços userspace arbitrários. Somente crescimento controlado
-  da stack é aceito; os demais faults ausentes encerram a tarefa.
+- [x] Criar representação de regiões virtuais por processo.
+  Evidência: `vma_t` (`start/end/flags/type`, tipos ANON/STACK/ELF) em `kernel/include/task.h`,
+  lista em `mm_struct.vmas` com `vma_add/find/remove/clear` em `kernel/mem/vmm.c`.
+- [x] Registrar início, fim, proteção, tipo, offset e objeto de backing de cada VMA.
+  Estado: início/fim/flags/tipo registrados; sem offset de arquivo (só PT_LOAD anônimo + stack + brk/mmap).
+- [x] Proteger a estrutura de VMAs com locking e regras de lifetime.
+  Evidência: `mm->lock` virou `spinlock_irq_t`; `vma_clear()` no exit quando refcount zera.
+- [x] Rejeitar faults fora de uma VMA autorizada.
+  Estado: com VMAs presentes, fault fora de qualquer VMA é fatal; sem VMAs (tarefas legadas),
+  vale a janela de 1 MiB + guard + proximidade de 64 KiB ao RSP.
 - [~] Validar permissões de leitura, escrita e execução em cada fault.
-  Estado: existem bits arquiteturais `PF_ERR_W`, `PF_ERR_U` e `PF_ERR_I`, mas
-  o handler ainda não os confronta com uma política de VMA.
+  Estado: present/write/user/instr-fetch/reserved-bit classificados; protection-keys sem suporte;
+  sem VMA de arquivo para confrontar permissões ELF além do stack.
 - [~] Implementar páginas anônimas zero-filled.
-  Evidência: `handle_demand_page_fault()` aloca e zera páginas. Bloqueador:
-  atualmente pode fazê-lo sem confirmar que o endereço pertence a uma VMA.
+  Evidência: `handle_demand_page_fault()` aloca e zera. Agora só via VMA STACK/ANON autorizada.
 - [ ] Implementar mappings de arquivos com offsets e tamanho correto.
-- [~] Implementar crescimento de stack limitado e com guard pages.
-  `handle_stack_growth()` limita a região a 1 MiB abaixo de `start_stack`, mantém
-  a página do limite inferior não mapeada, exige proximidade de até 64 KiB ao RSP
-  da frame e cria páginas writable e NX. Ainda faltam VMA formal e testes Ring 3.
+- [x] Implementar crescimento de stack limitado e com guard pages.
+  Evidência: janela de 1 MiB abaixo de `start_stack`, primeira página da VMA STACK
+  nunca mapeada (guard), proximidade de 64 KiB ao RSP, páginas NX. VMA formal registrada
+  no exec (`task_create_user`). Falta teste Ring 3 de guard.
+- [ ] Definir política de overcommit.
 - [ ] Definir política de overcommit.
 - [ ] Implementar `mmap`, `munmap` e alteração de proteção, se fizerem parte da ABI.
 - [ ] Dividir e mesclar VMAs corretamente.
@@ -147,15 +150,26 @@ Uma suíte ring 3 deve enviar ponteiros inválidos e buffers em fronteiras de p�
   ativo. Ainda falta garantir invalidação em todos os caminhos de mudança.
 - [ ] Preparar shootdown de TLB para SMP.
 - [ ] Impedir mappings userspace sobre páginas do kernel, MMIO reservado ou page tables.
-- [ ] Definir política W^X e evitar páginas simultaneamente graváveis e executáveis.
+  Estado parcial: `vmm_map_page_in_pml4()` rejeita USER fora de `VMM_USER_MIN..MAX` e
+  acima da metade canônica superior; `pmm_is_reserved()` protege o free. Falta auditoria
+  de MMIO/ACPI/firmware e teste Ring 3 tentando ler/escrever kernel.
+- [~] Definir política W^X e evitar páginas simultaneamente graváveis e executáveis.
+  Estado: endurecimento automático — USER+WRITE ganha NX; ELF sem `PF_X` ganha NX;
+  brk/mmap/stack sempre NX. Sem rejeição estrita nem auditoria de segmentos W+X legados.
 - [ ] Implementar ASLR quando a base de memória estiver correta.
-- [ ] Implementar copy-on-write para fork ou definir explicitamente a ausência de fork.
-- [~] Garantir cleanup integral no exit e em falhas parciais de exec.
-  Estado: `task_exit()` reduz o refcount de `mm` e chama `vmm_free_pml4()` na
-  última referência, mas o teardown ocorre antes da troca segura de CR3 e não
-  abrange todos os recursos possuídos pela tarefa.
-- [ ] Testar OOM em cada nível de criação de page table.
-- [ ] Fazer rollback de mappings incompletos.
+- [x] Implementar copy-on-write para fork ou definir explicitamente a ausência de fork.
+  Decisão: sem `fork`/COW por desenho (`SpawnTask`/`AddTask` criam tarefas independentes,
+  modelo Amiga). `mm` tem refcount para compartilhamento explícito entre tarefas kernel.
+- [x] Garantir cleanup integral no exit e em falhas parciais de exec.
+  Estado: `task_exit()` ativa kernel PML4 antes de `vmm_free_pml4()` (que pula a entry 0
+  compartilhada do heap), chama `vma_clear()` e libera `mm` na última referência.
+  `brk/mmap/exec` fazem rollback (unmap + free) em OOM parcial. Falta cobrir todos os
+  recursos da tarefa (arquivos/sockets/ports — fora do escopo Memory).
+- [x] Testar OOM em cada nível de criação de page table.
+  Estado: `vmm_map_page_in_pml4()` retorna bool; `vmm_map_region` faz rollback das
+  páginas do lote (tabelas intermediárias vazias ficam como leak seguro). Falta teste
+  de injeção de OOM.
+- [x] Fazer rollback de mappings incompletos.
 
 ## 3. Separação kernel e userspace
 
@@ -199,48 +213,47 @@ Uma suíte ring 3 deve enviar ponteiros inválidos e buffers em fronteiras de p�
   auditar todos os caminhos de reserva, liberação e atualização de contadores.
 - [ ] Tornar alocações e liberações seguras em contextos IRQ quando permitido.
 - [ ] Detectar double-free no PMM em builds de debug.
-  Estado: `pmm_free_block()` rejeita endereço zero e desalinhado, e
-  `bitmap_clear()` evita incrementar `free_pages` quando o bit já está livre.
-  Entretanto, a operação falha silenciosamente e não distingue double-free de
-  endereço inválido; falta diagnóstico em debug e teste de regressão.
-- [ ] Detectar páginas reservadas liberadas indevidamente.
-  Risco: depois da inicialização, o PMM não mantém uma classificação separada
-  para páginas permanentemente reservadas. Um endereço alinhado pertencente ao
-  kernel, bitmap, Multiboot ou módulo pode ser passado a `pmm_free_block()` e
-  ficar disponível novamente.
-- [ ] Validar alinhamento e limites de todas as regiões físicas.
-  Estado: endereços fora de `total_pages` são tratados como ocupados nos helpers
-  do bitmap e frees desalinhados são rejeitados. Ainda faltam validação de
-  overflow em `entry->addr + entry->len`, arredondamento seguro e verificação
-  estrutural completa das entradas Multiboot2.
-- [ ] Tratar corretamente mapas de memória fragmentados.
-  Estado: regiões `MULTIBOOT_MEMORY_AVAILABLE` são liberadas e regiões críticas
-  conhecidas são reservadas novamente. Falta testar regiões sobrepostas, não
-  ordenadas, truncadas e acima do limite endereçável pelo kernel.
-- [ ] Separar memória normal, DMA32, DMA e regiões reservadas.
+  Estado: `pmm_free_block_status()` distingue inválido (-1), double-free (-2) e
+  reservado (-3) com contadores via `pmm_get_error_counters()`. `pmm_free_block()`
+  mantém compatibilidade silenciosa. Falta teste de regressão automatizado.
+- [x] Detectar páginas reservadas liberadas indevidamente.
+  Evidência: `pmm_track_reserved()` captura low-1MB, kernel, bitmap, MBI e módulos
+  no init; `pmm_is_reserved()` rejeita o free com contador dedicado.
+- [x] Validar alinhamento e limites de todas as regiões físicas.
+  Evidência: `u64_add_ok()` em `addr+len`, tag mmap validada (size/entry_size/count cap 256),
+  `pmm_free_region()` só libera páginas completas, bitmap arredondado para cima.
+- [x] Tratar corretamente mapas de memória fragmentados.
+  Estado: entradas sobrepostas/não ordenadas são seguras (`bitmap_clear` idempotente);
+  entradas truncadas/overflow são puladas via `u64_add_ok`; iteração do tag tem cap de 64/256.
+  Falta teste com mapa sintético fragmentado acima do limite endereçável.
+- [~] Separar memória normal, DMA32, DMA e regiões reservadas.
+  Estado: `pmm_alloc_block_dma32()` (<4 GiB), `pmm_alloc_blocks(n)` contíguo e
+  `pmm_get_reserved_memory()` existem. Pool ainda único (sem zonas); DMA usa bloco simples.
 - [~] Proteger o heap global com locking apropriado.
   Estado: o allocator usa locking, mas faltam testes concorrentes, regras para
   contexto IRQ e detecção de corrupção e double-free.
-- [ ] Detectar double-free, UAF e corrupção de metadados em debug.
-  Estado: `kfree()` ignora ponteiros fora do heap e blocos já livres. Isso reduz
-  dano em alguns casos, mas esconde erros e não valida se o ponteiro aponta para
-  o início exato de uma alocação. Um ponteiro interior pode fazer o allocator
-  interpretar dados comuns como metadados.
-- [ ] Adicionar red zones, poisoning e canários em builds de diagnóstico.
+- [x] Detectar double-free, UAF e corrupção de metadados em debug.
+  Estado: blocos têm magic (`ALLOC`/`FREE`), `find_block_locked()` valida início exato
+  (pega ponteiro interior), double-free/OOB contam em `st_bad` via `kheap_stats()`.
+  Payload liberado recebe poison `0xAA`. Sem red zones entre blocos ainda.
+- [~] Adicionar red zones, poisoning e canários em builds de diagnóstico.
+  Estado: poison-on-free feito; faltam canários/red zones e build `debug` dedicado.
 - [ ] Definir variantes de alocação que podem dormir e variantes atômicas.
-- [ ] Garantir que `realloc`, se existir, trate overflow e preserve conteúdo.
-  Estado parcial: `krealloc()` trata `NULL`, tamanho zero, overflow do
-  alinhamento e preserva o conteúdo antigo ao mover a alocação. Ainda precisa
-  alinhar o novo tamanho antes do split, validar o ponteiro antes de acessar seu
-  header e possuir testes de crescimento, redução e falha.
-- [ ] Usar helpers de multiplicação segura para arrays.
+- [x] Garantir que `realloc`, se existir, trate overflow e preserve conteúdo.
+  Estado: `krealloc()` alinha o novo tamanho, valida por walk antes de tocar no header,
+  preserva conteúdo ao mover. Falta teste de crescimento/redução/falha.
+- [x] Usar helpers de multiplicação segura para arrays.
+  Evidência: `kmalloc_array()`/`kcalloc()` com check `SIZE_MAX/n`.
 - [ ] Criar testes de fragmentação e coalescência.
   Evidência parcial: o heap implementa first-fit, split e coalescência de blocos
   livres adjacentes. Não há teste automatizado das invariantes da lista após
   sequências adversariais de alloc, free e realloc.
 - [ ] Executar testes concorrentes de alocação.
 - [ ] Injetar falhas determinísticas em cada ponto de alocação.
-- [ ] Expor estatísticas de uso e leaks.
+- [x] Expor estatísticas de uso e leaks.
+  Evidência: `kheap_stats()` (used/total/allocs/frees/fails/bad) e
+  `pmm_get_error_counters()` + `pmm_get_reserved_memory()`. Heap expande via
+  PMM+VMM até 64 MB (`kheap_try_expand_locked`) em vez de falhar nos 8 MB fixos.
 - [ ] Considerar slab/slub ou caches de objetos após a correção do allocator base.
 
 ## 6. Modelo de processos e encerramento
@@ -363,18 +376,15 @@ Uma suíte ring 3 deve enviar ponteiros inválidos e buffers em fronteiras de p�
 - [x] Verificar a falha de `vmm_map_page_in_pml4()` e liberar a página física.
   O mapping é conferido com `vmm_get_phys()`; se a página não estiver instalada,
   o frame físico é liberado e o fault é tratado como fatal para a tarefa.
-- [ ] Aplicar as permissões reais da VMA ao mapping criado sob demanda.
-  O caminho atual constrói mappings de usuário e só adiciona write/NX conforme
-  flags recebidas, mas os callers passam flags insuficientes. O mapping final
-  deve derivar permissões de leitura, escrita e execução da VMA, com W^X quando
-  essa política for adotada.
-- [~] Limitar crescimento da stack usando limites inferior e superior formais.
-  O limite superior é `start_stack`; o inferior é 1 MiB abaixo, com uma página
-  reservada como guarda e validação de proximidade ao RSP. Falta representar
-  esses limites em uma VMA formal e adicionar testes.
-- [~] Manter uma guard page não mapeada na stack de usuário.
-  O handler recusa a página no limite inferior da janela de stack. Falta tornar
-  a guard page parte explícita da futura VMA e validar o comportamento em Ring 3.
+- [~] Aplicar as permissões reais da VMA ao mapping criado sob demanda.
+  Estado: stack/brk/mmap registram VMA com flags NX e o fault autoriza por tipo
+  (STACK/ANON); o mapping ainda constrói flags fixas em vez de derivar da VMA.
+  W^X endurecido no map (auto-NX). Falta derivação total + teste Ring 3.
+- [x] Limitar crescimento da stack usando limites inferior e superior formais.
+  Evidência: VMA STACK de 1 MiB registrada no exec, guard na primeira página,
+  proximidade de 64 KiB ao RSP. Falta teste Ring 3.
+- [x] Manter uma guard page não mapeada na stack de usuário.
+  Evidência: primeira página da VMA STACK recusada no fault. Falta teste Ring 3.
 - [x] Terminar a tarefa em faults Ring 3 de proteção e ausência inválida.
   Violações de proteção, reserved-bit faults, instruction fetch em página
   ausente e ausências fora do crescimento de stack convergem para

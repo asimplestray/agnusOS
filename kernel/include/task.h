@@ -57,14 +57,29 @@ typedef enum {
 #define SIGBIT_USER_7   SIGBIT(10)
 
 /* ================================================================== */
-/* Memory structures                                                    */
+/* Memory structures — VMA per process                                */
 /* ================================================================== */
+
+typedef enum {
+    VMA_TYPE_ANON  = 0,   /* demand-zero anonymous (brk/mmap) */
+    VMA_TYPE_STACK = 1,   /* user stack with guard page */
+    VMA_TYPE_ELF   = 2,   /* ELF PT_LOAD segment */
+} vma_type_t;
+
+typedef struct vma {
+    uint64_t start;       /* inclusive, page aligned */
+    uint64_t end;         /* exclusive, page aligned */
+    uint64_t flags;       /* VMM_FLAG_* for new pages */
+    vma_type_t type;
+    struct vma *next;
+} vma_t;
 
 typedef struct mm_struct {
     uint64_t pml4_phys;
     uint64_t start_stack;
-    spinlock_t lock;
+    spinlock_irq_t lock;
     int refcount;
+    vma_t *vmas;          /* authorized user mappings, guarded by lock */
 } mm_struct_t;
 
 /* ================================================================== */
@@ -133,7 +148,7 @@ extern task_struct_t *current;
 extern task_struct_t *task_list;
 
 task_struct_t *task_create(void (*entry)(void), uint64_t flags);
-void task_exit(int code);
+void task_exit(int code) __attribute__((noreturn));
 void schedule(void);
 void task_init(void);
 void syscall_init(void);

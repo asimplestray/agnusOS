@@ -12,6 +12,7 @@
 #include <vmm.h>
 #include <pmm.h>
 #include <screen.h>
+#include <task.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -51,7 +52,10 @@ static uint64_t map_region(uint64_t pml4_phys, uint64_t vaddr, uint64_t size, ui
         /* Zero the freshly allocated page */
         mem_zero((void *)phys, PAGE_SIZE);
 
-        vmm_map_page_in_pml4(pml4_phys, va, phys, flags);
+        if (!vmm_map_page_in_pml4(pml4_phys, va, phys, flags)) {
+            pmm_free_block(phys);
+            return 0;
+        }
     }
 
     /* Physical address of vaddr (identity-mapped kernel, offset within page) */
@@ -61,6 +65,12 @@ static uint64_t map_region(uint64_t pml4_phys, uint64_t vaddr, uint64_t size, ui
 }
 
 uint64_t elf_load(uint64_t pml4_phys, const uint8_t *data, uint32_t size)
+{
+    return elf_load_mm(pml4_phys, data, size, NULL);
+}
+
+uint64_t elf_load_mm(uint64_t pml4_phys, const uint8_t *data, uint32_t size,
+                     struct mm_struct *mm)
 {
     if (!data || size < sizeof(Elf64_Ehdr)) {
         screen_log("FAIL", COLOR_LIGHT_RED, "ELF: buffer muito pequeno");
@@ -103,13 +113,20 @@ uint64_t elf_load(uint64_t pml4_phys, const uint8_t *data, uint32_t size)
         if (phdr->p_type != PT_LOAD) continue;
         if (phdr->p_memsz == 0)      continue;
 
-        /* Determine mapping flags */
+        /* Determine mapping flags (W^X: data without exec gets NX). */
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
         if (phdr->p_flags & PF_W) flags |= VMM_FLAG_WRITE;
+        if (!(phdr->p_flags & PF_X)) flags |= VMM_FLAG_NX;
 
         /* Map destination virtual region and get kernel-visible pointer */
         uint64_t dst_kern = map_region(pml4_phys, phdr->p_vaddr, phdr->p_memsz, flags);
         if (!dst_kern) return 0;
+
+        if (mm) {
+            uint64_t start = phdr->p_vaddr & ~(uint64_t)(PAGE_SIZE - 1);
+            uint64_t end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+            vma_add(mm, start, end, flags, VMA_TYPE_ELF);
+        }
 
         /* Copy file image */
         if (phdr->p_filesz > 0) {

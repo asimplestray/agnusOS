@@ -18,6 +18,7 @@
 #include <tty.h>
 #include <string.h>
 #include <bsdsocket.h>
+#include <uaccess.h>
 
 /* ------------------------------------------------------------------ */
 /* Dispatch table                                                       */
@@ -238,15 +239,35 @@ int64_t aos_setbrk(int64_t size, struct interrupt_frame *frame) {
     static uint64_t brk_base = 0x20000000;
     uint64_t virt = brk_base;
     uint64_t aligned = ((uint64_t)size + 4095) & ~4095ULL;
+    uint64_t end;
+    if (__builtin_add_overflow(virt, aligned, &end)) return -AOS_ERR_BAD_ARGUMENT;
 
     for (uint64_t off = 0; off < aligned; off += 4096) {
         uint64_t phys = pmm_alloc_block();
-        if (!phys) return -AOS_ERR_NO_MEMORY;
-        vmm_map_page_in_pml4(current->mm->pml4_phys, virt + off, phys,
-                             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+        if (!phys) {
+            for (uint64_t u = 0; u < off; u += 4096) {
+                uint64_t p = vmm_get_phys(current->mm->pml4_phys, virt + u);
+                if (p) pmm_free_block(p);
+                vmm_unmap_page_in_pml4(current->mm->pml4_phys, virt + u);
+            }
+            return -AOS_ERR_NO_MEMORY;
+        }
+        if (!vmm_map_page_in_pml4(current->mm->pml4_phys, virt + off, phys,
+                             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX)) {
+            pmm_free_block(phys);
+            for (uint64_t u = 0; u < off; u += 4096) {
+                uint64_t p = vmm_get_phys(current->mm->pml4_phys, virt + u);
+                if (p) pmm_free_block(p);
+                vmm_unmap_page_in_pml4(current->mm->pml4_phys, virt + u);
+            }
+            return -AOS_ERR_NO_MEMORY;
+        }
     }
 
-    brk_base += aligned;
+    vma_add(current->mm, virt, end,
+            VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX,
+            VMA_TYPE_ANON);
+    brk_base = end;
     return (int64_t)virt;
 }
 
@@ -259,15 +280,35 @@ int64_t aos_allocmem(int64_t size, int64_t mem_flags, struct interrupt_frame *fr
     static uint64_t mmap_base = 0x30000000;
     uint64_t virt = mmap_base;
     uint64_t aligned = ((uint64_t)size + 4095) & ~4095ULL;
+    uint64_t end;
+    if (__builtin_add_overflow(virt, aligned, &end)) return -AOS_ERR_BAD_ARGUMENT;
 
     for (uint64_t off = 0; off < aligned; off += 4096) {
         uint64_t phys = pmm_alloc_block();
-        if (!phys) return -AOS_ERR_NO_MEMORY;
-        vmm_map_page_in_pml4(current->mm->pml4_phys, virt + off, phys,
-                             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+        if (!phys) {
+            for (uint64_t u = 0; u < off; u += 4096) {
+                uint64_t p = vmm_get_phys(current->mm->pml4_phys, virt + u);
+                if (p) pmm_free_block(p);
+                vmm_unmap_page_in_pml4(current->mm->pml4_phys, virt + u);
+            }
+            return -AOS_ERR_NO_MEMORY;
+        }
+        if (!vmm_map_page_in_pml4(current->mm->pml4_phys, virt + off, phys,
+                             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX)) {
+            pmm_free_block(phys);
+            for (uint64_t u = 0; u < off; u += 4096) {
+                uint64_t p = vmm_get_phys(current->mm->pml4_phys, virt + u);
+                if (p) pmm_free_block(p);
+                vmm_unmap_page_in_pml4(current->mm->pml4_phys, virt + u);
+            }
+            return -AOS_ERR_NO_MEMORY;
+        }
     }
 
-    mmap_base += aligned;
+    vma_add(current->mm, virt, end,
+            VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX,
+            VMA_TYPE_ANON);
+    mmap_base = end;
     return (int64_t)virt;
 }
 
@@ -285,6 +326,7 @@ int64_t aos_freemem(int64_t addr, int64_t size, struct interrupt_frame *frame) {
         if (phys) pmm_free_block(phys);
         vmm_unmap_page_in_pml4(pml4, v);
     }
+    vma_remove(current->mm, start, end);
     return 0;
 }
 
@@ -372,9 +414,12 @@ int64_t aos_getsystime(aos_timeval_t *tv, struct interrupt_frame *frame) {
     if (!tv) return -AOS_ERR_BAD_ARGUMENT;
     if (!rtc_is_initialized()) return -AOS_ERR_NOT_FOUND;
 
+    aos_timeval_t kernel_tv;
     uint64_t ns = rtc_get_epoch_nanoseconds();
-    tv->tv_secs  = (int64_t)(ns / 1000000000ULL);
-    tv->tv_micros = (int32_t)((ns % 1000000000ULL) / 1000);
+    kernel_tv.tv_secs = (int64_t)(ns / 1000000000ULL);
+    kernel_tv.tv_micros = (int32_t)((ns % 1000000000ULL) / 1000);
+    if (copy_to_user(tv, &kernel_tv, sizeof(kernel_tv)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
     return 0;
 }
 
@@ -436,10 +481,18 @@ int64_t aos_pipe(int64_t port_ids[2], struct interrupt_frame *frame) {
 
     int32_t p1 = msgport_create("pipe_r");
     int32_t p2 = msgport_create("pipe_w");
-    if (p1 < 0 || p2 < 0) return -AOS_ERR_NO_MEMORY;
+    if (p1 < 0 || p2 < 0) {
+        if (p1 >= 0) msgport_delete(p1);
+        if (p2 >= 0) msgport_delete(p2);
+        return -AOS_ERR_NO_MEMORY;
+    }
 
-    port_ids[0] = (int64_t)p1;
-    port_ids[1] = (int64_t)p2;
+    int64_t kernel_port_ids[2] = { (int64_t)p1, (int64_t)p2 };
+    if (copy_to_user(port_ids, kernel_port_ids, sizeof(kernel_port_ids)) != 0) {
+        msgport_delete(p1);
+        msgport_delete(p2);
+        return -AOS_ERR_BAD_ARGUMENT;
+    }
     return 0;
 }
 
@@ -453,9 +506,19 @@ static void str_copy(char *dst, const char *src, int max) {
     dst[i] = '\0';
 }
 
+static int copy_user_path(char dst[256], const char *src) {
+    if (!src || strncpy_from_user(dst, src, 256, NULL) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    return 0;
+}
+
 int64_t aos_open(const char *name, int64_t mode, struct interrupt_frame *frame) {
     (void)frame;
     if (!name) return -AOS_ERR_BAD_ARGUMENT;
+
+    char kernel_name[256];
+    if (strncpy_from_user(kernel_name, name, sizeof(kernel_name), NULL) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
 
     int32_t dos_mode = MODE_OLDFILE;
     if (mode == AOS_O_WRONLY || mode == (AOS_O_WRONLY | AOS_O_CREAT))
@@ -463,7 +526,7 @@ int64_t aos_open(const char *name, int64_t mode, struct interrupt_frame *frame) 
     else if (mode == AOS_O_RDWR)
         dos_mode = MODE_OLDFILE;
 
-    BPTR fh = dos_open(name, dos_mode);
+    BPTR fh = dos_open(kernel_name, dos_mode);
     if (!fh) return -(int64_t)dos_io_err();
     return (int64_t)fh;
 }
@@ -476,48 +539,75 @@ int64_t aos_close(int64_t handle, struct interrupt_frame *frame) {
 
 int64_t aos_read(int64_t handle, void *buf, int64_t count, struct interrupt_frame *frame) {
     (void)frame;
-    if (!buf || count <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (!buf || count <= 0 || count > INT32_MAX)
+        return -AOS_ERR_BAD_ARGUMENT;
+
+    char *kernel_buf = (char *)kmalloc((size_t)count);
+    if (!kernel_buf)
+        return -AOS_ERR_NO_MEMORY;
+
+    int64_t got;
 
     /* stdin: use TTY */
     if (handle == 0) {
         if (console_tty)
-            return tty_read(console_tty, (char *)buf, (int)count);
-        char *char_buf = (char *)buf;
-        int64_t read_bytes = 0;
-        while (read_bytes < count) {
-            extern wait_queue_head_t kbd_wait;
-            extern char keyboard_pop_char(void);
-            char c = keyboard_pop_char();
-            if (c == 0) {
-                if (read_bytes > 0) break;
-                wait_event(kbd_wait, (c = keyboard_pop_char()) != 0);
+            got = tty_read(console_tty, kernel_buf, (int)count);
+        else {
+            got = 0;
+            while (got < count) {
+                extern wait_queue_head_t kbd_wait;
+                extern char keyboard_pop_char(void);
+                char c = keyboard_pop_char();
+                if (c == 0) {
+                    if (got > 0) break;
+                    wait_event(kbd_wait, (c = keyboard_pop_char()) != 0);
+                }
+                kernel_buf[got++] = c;
+                if (c == '\n') break;
             }
-            char_buf[read_bytes++] = c;
-            if (c == '\n') break;
         }
-        return read_bytes;
+    } else {
+        got = (int64_t)dos_read((BPTR)handle, kernel_buf, (int32_t)count);
     }
 
-    int32_t got = dos_read((BPTR)handle, buf, (int32_t)count);
-    return (int64_t)got;
+    if (got > 0 && copy_to_user(buf, kernel_buf, (size_t)got) != 0) {
+        kfree(kernel_buf);
+        return -AOS_ERR_BAD_ARGUMENT;
+    }
+    kfree(kernel_buf);
+    return got;
 }
 
 int64_t aos_write(int64_t handle, const void *buf, int64_t count, struct interrupt_frame *frame) {
     (void)frame;
-    if (!buf || count <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (!buf || count <= 0 || count > INT32_MAX)
+        return -AOS_ERR_BAD_ARGUMENT;
+
+    char *kernel_buf = (char *)kmalloc((size_t)count);
+    if (!kernel_buf)
+        return -AOS_ERR_NO_MEMORY;
+    if (copy_from_user(kernel_buf, buf, (size_t)count) != 0) {
+        kfree(kernel_buf);
+        return -AOS_ERR_BAD_ARGUMENT;
+    }
+
+    int64_t written;
 
     /* stdout/stderr: use TTY */
     if (handle == 1 || handle == 2) {
         if (console_tty)
-            return tty_write(console_tty, (const char *)buf, (int)count);
-        const char *str = (const char *)buf;
-        for (int64_t i = 0; i < count; i++)
-            screen_putc(str[i]);
-        return count;
+            written = tty_write(console_tty, kernel_buf, (int)count);
+        else {
+            for (int64_t i = 0; i < count; i++)
+                screen_putc(kernel_buf[i]);
+            written = count;
+        }
+    } else {
+        written = (int64_t)dos_write((BPTR)handle, kernel_buf, (int32_t)count);
     }
 
-    int32_t written = dos_write((BPTR)handle, buf, (int32_t)count);
-    return (int64_t)written;
+    kfree(kernel_buf);
+    return written;
 }
 
 int64_t aos_seek(int64_t handle, int64_t position, int64_t offset_type, struct interrupt_frame *frame) {
@@ -531,7 +621,10 @@ int64_t aos_examine(int64_t lock, void *fib_buf, int64_t fib_size, struct interr
     if (!fib_buf || fib_size < (int64_t)sizeof(file_info_block_t))
         return -AOS_ERR_BAD_ARGUMENT;
 
-    int32_t rc = dos_examine((BPTR)lock, (file_info_block_t *)fib_buf);
+    file_info_block_t kernel_fib;
+    int32_t rc = dos_examine((BPTR)lock, &kernel_fib);
+    if (rc == 0 && copy_to_user(fib_buf, &kernel_fib, sizeof(kernel_fib)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
     return (int64_t)rc;
 }
 
@@ -540,7 +633,10 @@ int64_t aos_examine_dir(int64_t lock, void *fib_buf, int64_t fib_size, struct in
     if (!fib_buf || fib_size < (int64_t)sizeof(file_info_block_t))
         return -AOS_ERR_BAD_ARGUMENT;
 
-    int32_t rc = dos_ex_next((BPTR)lock, (file_info_block_t *)fib_buf);
+    file_info_block_t kernel_fib;
+    int32_t rc = dos_ex_next((BPTR)lock, &kernel_fib);
+    if (rc == 0 && copy_to_user(fib_buf, &kernel_fib, sizeof(kernel_fib)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
     return (int64_t)rc;
 }
 
@@ -555,26 +651,30 @@ int64_t aos_flush(int64_t handle, struct interrupt_frame *frame) {
 
 int64_t aos_create_dir(const char *name, struct interrupt_frame *frame) {
     (void)frame;
-    if (!name) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)dos_create_dir(name);
+    char kernel_name[256];
+    if (copy_user_path(kernel_name, name) != 0) return -AOS_ERR_BAD_ARGUMENT;
+    return (int64_t)dos_create_dir(kernel_name);
 }
 
 int64_t aos_delete_dir(const char *name, struct interrupt_frame *frame) {
     (void)frame;
-    if (!name) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)dos_delete_file(name);
+    char kernel_name[256];
+    if (copy_user_path(kernel_name, name) != 0) return -AOS_ERR_BAD_ARGUMENT;
+    return (int64_t)dos_delete_file(kernel_name);
 }
 
 int64_t aos_delete_file(const char *name, struct interrupt_frame *frame) {
     (void)frame;
-    if (!name) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)dos_delete_file(name);
+    char kernel_name[256];
+    if (copy_user_path(kernel_name, name) != 0) return -AOS_ERR_BAD_ARGUMENT;
+    return (int64_t)dos_delete_file(kernel_name);
 }
 
 int64_t aos_current_dir(const char *name, struct interrupt_frame *frame) {
     (void)frame;
-    if (!name) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)dos_current_dir(name);
+    char kernel_name[256];
+    if (copy_user_path(kernel_name, name) != 0) return -AOS_ERR_BAD_ARGUMENT;
+    return (int64_t)dos_current_dir(kernel_name);
 }
 
 int64_t aos_current_dir_fd(int64_t handle, struct interrupt_frame *frame) {
@@ -588,14 +688,22 @@ int64_t aos_current_dir_fd(int64_t handle, struct interrupt_frame *frame) {
 int64_t aos_lock_cwd(char *buf, int64_t size, struct interrupt_frame *frame) {
     (void)frame;
     if (!buf || size <= 0) return -AOS_ERR_BAD_ARGUMENT;
-    str_copy(buf, "Work:", (int)size);
+    char cwd[6];
+    str_copy(cwd, "Work:", sizeof(cwd));
+    size_t copy_size = (size_t)size < sizeof(cwd) ? (size_t)size : sizeof(cwd);
+    if (copy_to_user(buf, cwd, copy_size) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
     return 0;
 }
 
 int64_t aos_rename(const char *old_name, const char *new_name, struct interrupt_frame *frame) {
     (void)frame;
-    if (!old_name || !new_name) return -AOS_ERR_BAD_ARGUMENT;
-    return (int64_t)dos_rename(old_name, new_name);
+    char kernel_old_name[256];
+    char kernel_new_name[256];
+    if (copy_user_path(kernel_old_name, old_name) != 0 ||
+        copy_user_path(kernel_new_name, new_name) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    return (int64_t)dos_rename(kernel_old_name, kernel_new_name);
 }
 
 /* ================================================================== */
@@ -607,7 +715,7 @@ int64_t aos_doio(int64_t handle, uint64_t request, void *arg, struct interrupt_f
     if (handle <= 2 && console_tty) {
         return tty_ioctl(console_tty, request, arg);
     }
-    return -AOS_ERR_BAD_ARGUMENT;
+    return dos_do_io((BPTR)handle, request, arg);
 }
 
 /* ================================================================== */
@@ -650,10 +758,12 @@ int64_t aos_set_ioerr(int64_t err, struct interrupt_frame *frame) {
 
 int64_t aos_loadseg(const char *path, struct interrupt_frame *frame) {
     (void)frame;
-    if (!path) return -AOS_ERR_BAD_ARGUMENT;
+    char kernel_path[256];
+    if (copy_user_path(kernel_path, path) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
 
     /* Open file via DOS layer */
-    BPTR fh = dos_open(path, MODE_OLDFILE);
+    BPTR fh = dos_open(kernel_path, MODE_OLDFILE);
     if (!fh) return -AOS_ERR_NOT_FOUND;
 
     file_info_block_t fib;
@@ -663,7 +773,7 @@ int64_t aos_loadseg(const char *path, struct interrupt_frame *frame) {
     if (fib.fib_DirEntryType > 0) return -AOS_ERR_IS_DIRECTORY;
 
     /* Re-open for reading */
-    fh = dos_open(path, MODE_OLDFILE);
+    fh = dos_open(kernel_path, MODE_OLDFILE);
     if (!fh) return -AOS_ERR_NOT_FOUND;
 
     uint32_t file_size = (uint32_t)fib.fib_Size;
@@ -684,21 +794,29 @@ int64_t aos_loadseg(const char *path, struct interrupt_frame *frame) {
 
     if (!entry) { vmm_free_pml4(new_pml4); return -AOS_ERR_NOT_EXECUTABLE; }
 
-    /* Allocate user stack */
+    /* Allocate user stack: 1 MiB window, top page mapped, bottom page guard. */
     uint64_t user_stack_top = 0x7FFFFFF000ULL;
     uint64_t stack_phys = pmm_alloc_block();
     if (!stack_phys) { vmm_free_pml4(new_pml4); return -AOS_ERR_NO_MEMORY; }
 
-    vmm_map_page_in_pml4(new_pml4, user_stack_top - 4096, stack_phys,
-                         VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+    if (!vmm_map_page_in_pml4(new_pml4, user_stack_top - 4096, stack_phys,
+                         VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX)) {
+        pmm_free_block(stack_phys);
+        vmm_free_pml4(new_pml4);
+        return -AOS_ERR_NO_MEMORY;
+    }
 
     extern uint64_t kernel_pml4_phys;
     if (current->mm) {
         if (current->mm->pml4_phys != 0 && current->mm->pml4_phys != kernel_pml4_phys) {
+            vma_clear(current->mm);
             vmm_free_pml4(current->mm->pml4_phys);
         }
         current->mm->pml4_phys = new_pml4;
         current->mm->start_stack = user_stack_top;
+        vma_add(current->mm, user_stack_top - (1024 * 1024), user_stack_top,
+                VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX,
+                VMA_TYPE_STACK);
     }
 
     __asm__ volatile("mov %0, %%cr3" : : "r"(new_pml4) : "memory");
@@ -834,12 +952,17 @@ int64_t aos_assign(const char *name, const char *path, int64_t op, struct interr
 
 int64_t aos_create_port(const char *name, struct interrupt_frame *frame) {
     (void)frame;
+    char kernel_name[16];
     if (name) {
-        static char nbuf[16];
-        int i = 0;
-        while (name[i] && name[i] != ':' && i < 15) { nbuf[i] = name[i]; i++; }
-        nbuf[i] = '\0';
-        name = nbuf;
+        if (strncpy_from_user(kernel_name, name, sizeof(kernel_name), NULL) != 0)
+            return -AOS_ERR_BAD_ARGUMENT;
+        for (int i = 0; kernel_name[i]; ++i) {
+            if (kernel_name[i] == ':') {
+                kernel_name[i] = '\0';
+                break;
+            }
+        }
+        name = kernel_name;
     }
     return msgport_create(name);
 }
@@ -851,12 +974,26 @@ int64_t aos_delete_port(int64_t id, struct interrupt_frame *frame) {
 
 int64_t aos_put_msg(int64_t id, const msg_t *msg, struct interrupt_frame *frame) {
     (void)frame;
-    return msgport_put((int32_t)id, msg);
+    msg_t kernel_msg;
+    if (!msg || copy_from_user(&kernel_msg, msg, sizeof(kernel_msg)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    return msgport_put((int32_t)id, &kernel_msg);
 }
 
 int64_t aos_get_msg(int64_t id, msg_t *msg, int64_t *token, struct interrupt_frame *frame) {
     (void)frame;
-    return msgport_get((int32_t)id, msg, token);
+    if (!msg || !token)
+        return -AOS_ERR_BAD_ARGUMENT;
+
+    msg_t kernel_msg;
+    int64_t kernel_token = 0;
+    int64_t rc = msgport_get((int32_t)id, &kernel_msg, &kernel_token);
+    if (rc != MSGPORT_GET_MSG)
+        return rc;
+    if (copy_to_user(msg, &kernel_msg, sizeof(kernel_msg)) != 0 ||
+        copy_to_user(token, &kernel_token, sizeof(kernel_token)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    return rc;
 }
 
 int64_t aos_wait_port(int64_t id, int64_t timeout_ms, struct interrupt_frame *frame) {
@@ -866,5 +1003,8 @@ int64_t aos_wait_port(int64_t id, int64_t timeout_ms, struct interrupt_frame *fr
 
 int64_t aos_reply_msg(int64_t token, const msg_t *msg, struct interrupt_frame *frame) {
     (void)frame;
-    return msgport_reply(token, msg);
+    msg_t kernel_msg;
+    if (!msg || copy_from_user(&kernel_msg, msg, sizeof(kernel_msg)) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    return msgport_reply(token, &kernel_msg);
 }
