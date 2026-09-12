@@ -1,9 +1,15 @@
 # AgnusOS
 
-**Amiga spirit, modern muscle.**  
-x86_64 monolithic kernel (C + asm) — AmigaOS-like API (Exec/DOS/Intuition) over a Linux-driven substrate (MMU, preempt, DRM/KMS, PCI, VFS).
+**Amiga spirit, modern muscle — as a learning project.**  
+x86_64 monolithic kernel (C + asm) — AmigaOS-like API (Exec/DOS) over a simple substrate (MMU, scheduler, PCI, VFS, DRM infra).
 
 > **Why "Agnus"?** The Agnus chip (Address Generator Unit) was the heart of the Amiga — DMA, Chip RAM, Copper/Blitter sync. This kernel is the modern equivalent: the central coordinator moving data between CPU, GPU, devices, and memory.
+
+> **Where this is:** a hobby/research kernel that boots to a shell in QEMU (v0.3, M1 —
+> see `docs/PRODUCTION_READINESS.md`). A real desktop is the distant north star, not the
+> milestone: we're well below 1% of what a desktop kernel needs, and there's no rush to
+> claim otherwise. The current goal is solid foundations (memory, isolation, lifecycle,
+> automated tests), one subsystem at a time.
 
 ---
 
@@ -154,13 +160,20 @@ Em todo boot: `drm_gem_test` + `dma_test_run_all` + `assign_test`/`msgport_test`
 
 ---
 
-## Roadmap (Next — ordem do docs/PRODUCTION_READINESS.md: fronteira uaccess → lifecycle → VMM → testes QEMU)
+## Roadmap
 
-1. **IORequest async** (`SendIO`/`WaitIO`/`AbortIO` via MsgPort + kworker)
-2. **dogin** — pipes, redirect, `Run` (env/`Execute`/`If`/`While` já existem)
-3. **Intuition** — Layers (damage-rectangle), Screens, Windows, Gadgets (só após P0/P1)
-4. **Datatypes** — ELF/PNG/IFF/text loaders
-5. **GPU** — porte real só sobre compat layer definida; `gpu/agnus` fica como bring-up Polaris até lá
+**Agora — fundações** (ordem do `docs/PRODUCTION_READINESS.md`):
+
+1. Fronteira userspace/kernel (auditoria `uaccess` das 66 traps, testes Ring 3 negativos)
+2. Lifecycle (fd-table por processo, teardown de tarefas/arquivos/sockets/ports)
+3. Testes automatizados em QEMU (modo selftest, `TESTS: PASS` na serial, `make test`)
+4. **dogin** — pipes, redirect, `Run` (env/`Execute`/`If`/`While` já existem)
+5. **IORequest async** (`SendIO`/`WaitIO`/`AbortIO` via MsgPort + kworker)
+
+**Um dia — aspiração distante, sem prazo nem promessa:**
+
+* Intuition (Screens/Windows/Gadgets), Datatypes, porte real de GPU — só após P0/P1 zerados.
+  Estão aqui como direção, não como plano.
 
 ---
 
