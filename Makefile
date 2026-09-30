@@ -23,11 +23,11 @@ LDFLAGS = -n -nostdlib -T linker.ld -m elf_x86_64 --no-warn-rwx-segments
 # Files
 OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o build/kernel.o \
       build/screen.o build/framebuffer.o build/timer.o build/keyboard.o build/tty.o \
-      build/pmm.o build/vmm.o build/kheap.o build/pci.o \
+      build/pmm.o build/vmm.o build/uaccess.o build/kheap.o build/pci.o \
       build/task.o build/task_switch.o build/syscall.o build/syscall_asm.o \
       build/vfs.o build/ramfs.o build/elf.o build/pipe.o \
       build/procfs.o build/devfs.o build/bcache.o \
-      build/ata.o build/fat32.o build/firmware.o build/workqueue.o build/dma.o build/apollo_drv.o build/polaris.o build/serial.o \
+      build/ata.o build/fat32.o build/firmware.o build/workqueue.o build/dma.o build/agnus_drv.o build/polaris.o build/serial.o \
       build/rtc.o build/panic.o build/drm_device.o \
       build/rtl8139.o build/net_core.o build/arp.o build/ip.o build/icmp.o build/udp.o build/loopback.o build/bsdsocket.o \
       build/drm_gem.o \
@@ -37,27 +37,57 @@ OBJ = build/boot.o build/interrupts.o build/idt.o build/gdt.o build/gdt_asm.o bu
       build/string.o \
       build/dma_fence.o build/dma_resv.o build/dma_test.o \
       build/dma_buf.o build/drm_sched.o build/drm_atomic.o build/compat_check.o \
-      build/amdgpu_device.o build/amdgpu_vram_mgr.o build/amdgpu_mode.o \
-      build/amdgpu_gfx.o build/amdgpu_fw.o build/thermal_monitor.o build/gpu_test_pattern.o \
-      build/dc_core.o build/dce_resource.o build/dcn_resource.o \
       build/dogin.o \
       build/acpi.o build/iommu.o
 
 # Output
 ISO_OUT = agnusos.iso
 BIN_OUT = build/iso/boot/agnusos.bin
-FW_CPIO = build/fw.cpio
 
-.PHONY: all clean run
+.PHONY: all clean run abi-check fat32-check ring3-check test
 
 all: $(ISO_OUT)
 
-$(FW_CPIO): scripts/make_fw_initrd.sh
-	@mkdir -p build
-	@echo ">> Packaging firmware CPIO..."
-	@bash scripts/make_fw_initrd.sh
+# Host-side compile-time guard for the frozen public ABI. This target does
+# not execute kernel code; every published number and layout is checked by
+# the compiler through _Static_assert.
+abi-check:
+	@mkdir -p build/tests
+	@echo ">> Checking AgnusOS uAPI layouts and numeric ABI..."
+	@$(CC) -std=c11 -Wall -Wextra -Werror -Ikernel/include \
+		tests/uapi_abi.c -o build/tests/uapi_abi
+	@build/tests/uapi_abi
+	@echo ">> AgnusOS uAPI 1.0 ABI check passed."
 
-$(ISO_OUT): $(OBJ) linker.ld grub.cfg limine.cfg $(FW_CPIO) limine/BOOTX64.EFI limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin
+# Host-side FAT32 corruption and injected-I/O regression tests. The harness
+# provides an in-memory ATA device and includes the production implementation
+# so internal validation and rollback paths can be exercised directly.
+fat32-check:
+	@mkdir -p build/tests
+	@echo ">> Running FAT32 safety and failure-path tests..."
+	@$(CC) -std=c11 -O0 -g -Wall -Wextra -Werror -Ikernel/include \
+		tests/fat32_safety.c -o build/tests/fat32_safety
+	@build/tests/fat32_safety
+	@echo ">> FAT32 safety and failure-path tests passed."
+
+# Ring-3 negative-probe generator check: regenerates /tmp/ring3test.elf
+# (P1 valid write, P2 NULL, P3 kernel VA, P4 missing page, P5 alloc/touch,
+# P6 systime stack/kernel, P7 cross-page write) and fails if the generator
+# itself breaks. The ELF bytes are embedded in kernel/fs/ramfs.c and
+# executed at boot by ring3_selftest() (expects exit 0, serial
+# "[RING3] ALL CHECKS PASSED").
+ring3-check:
+	@echo ">> Regenerating Ring-3 negative-probe ELF..."
+	@python3 scripts/gen_ring3.py
+	@test -f /tmp/ring3test.elf || (echo "ring3 ELF not generated"; exit 1)
+	@echo ">> Ring-3 probe generator ok."
+
+# Automated gate: ABI + FAT32 + Ring-3 generator. QEMU boot suites
+# (ring3_selftest, msgport/pipe/drm selftests) run at boot on serial.
+test: abi-check fat32-check ring3-check
+	@echo "TESTS: PASS"
+
+$(ISO_OUT): $(OBJ) linker.ld grub.cfg limine.cfg limine/BOOTX64.EFI limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin
 	@echo ">> Creating build directories..."
 	@mkdir -p build/iso/boot
 	@mkdir -p build/iso/EFI/BOOT
@@ -65,8 +95,6 @@ $(ISO_OUT): $(OBJ) linker.ld grub.cfg limine.cfg $(FW_CPIO) limine/BOOTX64.EFI l
 	@$(LD) $(LDFLAGS) -o $(BIN_OUT) $(OBJ)
 	@echo ">> Verifying Multiboot2 header..."
 	@grub-file --is-x86-multiboot2 $(BIN_OUT)
-	@echo ">> Copying firmware archive..."
-	@cp $(FW_CPIO) build/iso/boot/fw.cpio
 	@echo ">> Generating Limine hybrid ISO (BIOS+UEFI)..."
 	@cp limine.cfg build/iso/boot/limine.cfg
 	@cp limine.cfg build/iso/limine.cfg
@@ -79,15 +107,13 @@ $(ISO_OUT): $(OBJ) linker.ld grub.cfg limine.cfg $(FW_CPIO) limine/BOOTX64.EFI l
 	@./limine/limine bios-install $(ISO_OUT) 2>/dev/null
 	@echo ">> Success! Generated $(ISO_OUT) (Limine BIOS+UEFI, GRUB fallback: make grub-iso)"
 
-grub-iso: $(OBJ) linker.ld grub.cfg $(FW_CPIO)
+grub-iso: $(OBJ) linker.ld grub.cfg
 	@echo ">> [GRUB fallback] Creating build directories..."
 	@mkdir -p build/iso/boot/grub
 	@echo ">> Linking kernel..."
 	@$(LD) $(LDFLAGS) -o $(BIN_OUT) $(OBJ)
 	@echo ">> Verifying Multiboot2 header..."
 	@grub-file --is-x86-multiboot2 $(BIN_OUT)
-	@echo ">> Copying firmware archive..."
-	@cp $(FW_CPIO) build/iso/boot/fw.cpio
 	@echo ">> Generating GRUB ISO..."
 	@cp grub.cfg build/iso/boot/grub/grub.cfg
 	@grub-mkrescue -o $(ISO_OUT) build/iso
@@ -148,6 +174,11 @@ build/vmm.o: kernel/mem/vmm.c
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
+build/uaccess.o: kernel/mem/uaccess.c kernel/include/uaccess.h kernel/include/vmm.h
+	@mkdir -p build
+	@echo ">> Compiling $<..."
+	@$(CC) $(CFLAGS) -c -o $@ $<
+
 build/kheap.o: kernel/mem/kheap.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
@@ -178,12 +209,12 @@ build/pci.o: kernel/pci/pci.c
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
-build/apollo_drv.o: kernel/drivers/gpu/apollo/apollo_drv.c
+build/agnus_drv.o: kernel/drivers/gpu/agnus/agnus_drv.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
-build/polaris.o: kernel/drivers/gpu/apollo/polaris.c
+build/polaris.o: kernel/drivers/gpu/agnus/polaris.c
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<
@@ -359,56 +390,6 @@ build/drm_atomic.o: kernel/drivers/drm/drm_atomic.c kernel/include/drm/drm_atomi
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 build/compat_check.o: kernel/drivers/drm/compat_check.c
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/amdgpu_device.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_device.c kernel/include/amdgpu.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/amdgpu_vram_mgr.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_vram_mgr.c kernel/include/amdgpu.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/amdgpu_mode.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_mode.c kernel/include/amdgpu.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/amdgpu_gfx.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_gfx.c kernel/include/amdgpu.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/amdgpu_fw.o: kernel/drivers/gpu/amd/amdgpu/amdgpu_fw.c kernel/include/amdgpu.h kernel/include/firmware.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/thermal_monitor.o: kernel/drivers/gpu/amd/amdgpu/thermal_monitor.c kernel/include/amdgpu.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/gpu_test_pattern.o: kernel/drivers/gpu/amd/amdgpu/gpu_test_pattern.c kernel/include/amdgpu.h kernel/include/amdgpu_dc.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/dc_core.o: kernel/drivers/gpu/amd/amdgpu/dc/dc_core.c kernel/include/amdgpu_dc.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/dce_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dce_resource.c kernel/include/amdgpu_dc.h
-	@mkdir -p build
-	@echo ">> Compiling $<..."
-	@$(CC) $(CFLAGS) -c -o $@ $<
-
-build/dcn_resource.o: kernel/drivers/gpu/amd/amdgpu/dc/dcn_resource.c kernel/include/amdgpu_dc.h
 	@mkdir -p build
 	@echo ">> Compiling $<..."
 	@$(CC) $(CFLAGS) -c -o $@ $<

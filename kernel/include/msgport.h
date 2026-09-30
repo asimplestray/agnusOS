@@ -16,6 +16,13 @@
 
 #define MSG_MAX_PAYLOAD 128
 
+/* Lifecycle quotas (enforced in msgport.c): per-task port cap, per-port
+ * queue cap (backpressure), per-task pending-reply cap (each pins a kmsg).
+ * Put() stays open to any sender; Get/Wait/Delete/Reply are owner-only. */
+#define MSGPORT_MAX_PER_TASK         16
+#define MSGPORT_MAX_QUEUE            32
+#define MSGPORT_MAX_REPLIES_PER_TASK 32
+
 typedef struct msg_t {
     uint32_t size;        /* payload bytes (0..MSG_MAX_PAYLOAD) */
     uint32_t code;        /* user-defined message code */

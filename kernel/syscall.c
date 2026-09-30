@@ -1,6 +1,7 @@
 #include <syscall.h>
 #include <task.h>
 #include <screen.h>
+#include <serial.h>
 #include <kheap.h>
 #include <vmm.h>
 #include <pmm.h>
@@ -19,6 +20,7 @@
 #include <string.h>
 #include <bsdsocket.h>
 #include <uaccess.h>
+#include <uapi/drm.h>
 
 /* ------------------------------------------------------------------ */
 /* Dispatch table                                                       */
@@ -95,16 +97,50 @@ void syscall_init(void) {
 void syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, struct interrupt_frame *frame) {
     if (num >= NR_SYSCALLS || !syscall_table[num]) {
         if (current) current->errno_val = AOS_ERR_NOT_FOUND;
-        current->rax = (uint64_t)(-AOS_ERR_NOT_FOUND);
+        if (frame) frame->rax = (uint64_t)(-AOS_ERR_NOT_FOUND);
+        if (current) current->rax = (uint64_t)(-AOS_ERR_NOT_FOUND);
         return;
     }
     int64_t ret = syscall_table[num](a1, a2, a3, a4, a5, a6, frame);
-    current->rax = (uint64_t)ret;
+    /* Return value travels back in the trap frame: syscall_entry pops GPRs
+     * from it, so userspace RAX receives ret (current->rax mirrors it for
+     * kernel-side IoErr() consumers). */
+    if (frame) frame->rax = (uint64_t)ret;
+    if (current) current->rax = (uint64_t)ret;
 }
 
 /* ================================================================== */
 /* Task management                                                      */
 /* ================================================================== */
+
+/* True when the trap came from Ring 3 (user mode). */
+static int caller_is_user(struct interrupt_frame *frame) {
+    return frame && ((frame->cs & 3) == 3);
+}
+
+/* Validate a user-supplied task entry point.
+ * Entries inside the canonical user range must be backed by a mapped USER
+ * page in the caller's address space. Entries outside it are only accepted
+ * from kernel-mm callers (early boot / CPL0-only world) which keep legacy
+ * behavior — user tasks must never smuggle a kernel address here. */
+static int entry_valid_for_caller(int64_t entry_addr) {
+    uint64_t entry;
+    if (entry_addr == 0) return 0;
+    if (!current || !current->mm) return 0;
+    entry = (uint64_t)entry_addr;
+    if (entry < VMM_USER_MIN || entry > VMM_USER_MAX) {
+        extern uint64_t kernel_pml4_phys;
+        return current->mm->pml4_phys == kernel_pml4_phys;
+    }
+    {
+        uint64_t flags = vmm_get_page_flags(current->mm->pml4_phys,
+                                            entry & ~0xFFFULL);
+        if (!(flags & VMM_FLAG_PRESENT) || !(flags & VMM_FLAG_USER)) return 0;
+    }
+    return 1;
+}
+
+#define SPAWN_STACK_MAX (8ULL * 1024 * 1024)
 
 int64_t aos_exit(int64_t code, struct interrupt_frame *frame) {
     (void)frame;
@@ -114,12 +150,17 @@ int64_t aos_exit(int64_t code, struct interrupt_frame *frame) {
 
 /* AOS_SpawnTask — CreateTask replacement.
  * a1 = entry address, a2 = stack size.
- * No COW fork — AmigaOS creates independent tasks. */
+ * No COW fork — AmigaOS creates independent tasks.
+ *
+ * task_create() builds a KERNEL task (CPL0). Ring 3 must not pick its RIP:
+ * until user-mode task spawning exists (lifecycle epic), traps from user
+ * mode are refused with NO_PERMISSION instead of handing out CPL0. */
 int64_t aos_spawn_task(int64_t entry_addr, int64_t stack_size, struct interrupt_frame *frame) {
-    (void)frame;
     if (!current) return -AOS_ERR_BAD_ARGUMENT;
-    if (entry_addr == 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (caller_is_user(frame)) return -AOS_ERR_NO_PERMISSION;
+    if (!entry_valid_for_caller(entry_addr)) return -AOS_ERR_BAD_ARGUMENT;
     if (stack_size <= 0) stack_size = 65536; /* default 64K */
+    if ((uint64_t)stack_size > SPAWN_STACK_MAX) return -AOS_ERR_BAD_ARGUMENT;
 
     task_struct_t *child = task_create((void (*)(void))entry_addr, 0);
     if (!child) return -AOS_ERR_NO_MEMORY;
@@ -133,7 +174,11 @@ int64_t aos_find_task(struct interrupt_frame *frame) {
 }
 
 int64_t aos_addtask(void (*entry)(void), uint64_t flags, struct interrupt_frame *frame) {
-    (void)frame;
+    /* Same policy as SpawnTask: task_create() yields a CPL0 task, so Ring 3
+     * callers are refused until user-mode spawning exists. */
+    if (!current) return -AOS_ERR_BAD_ARGUMENT;
+    if (caller_is_user(frame)) return -AOS_ERR_NO_PERMISSION;
+    if (!entry_valid_for_caller((int64_t)entry)) return -AOS_ERR_BAD_ARGUMENT;
     task_struct_t *task = task_create(entry, flags);
     if (!task) return -AOS_ERR_NO_MEMORY;
     return (int64_t)task->pid;
@@ -399,9 +444,17 @@ int64_t aos_delay(int64_t ticks, struct interrupt_frame *frame) {
     timer.expires = timer_get_ticks() + (uint64_t)ticks;
     timer.function = delay_wakeup;
     timer.data = (uint64_t)current;
+    timer.next = NULL;
     current->state = TASK_STATE_UNINTERRUPTIBLE;
     timer_add(&timer);
     schedule();
+    /* Lifetime: timer lives on our stack. If we woke spuriously before
+     * expiry (signal/migration), the entry would otherwise dangle in the
+     * timer list. Same pattern as aos_wait: always unlink on return.
+     * Harmless if the timer already fired (callback unlinks before run). */
+    timer_remove(&timer);
+    if (current->state == TASK_STATE_UNINTERRUPTIBLE)
+        current->state = TASK_STATE_RUNNING;
     return 0;
 }
 
@@ -419,7 +472,7 @@ int64_t aos_getsystime(aos_timeval_t *tv, struct interrupt_frame *frame) {
     kernel_tv.tv_secs = (int64_t)(ns / 1000000000ULL);
     kernel_tv.tv_micros = (int32_t)((ns % 1000000000ULL) / 1000);
     if (copy_to_user(tv, &kernel_tv, sizeof(kernel_tv)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return 0;
 }
 
@@ -491,7 +544,7 @@ int64_t aos_pipe(int64_t port_ids[2], struct interrupt_frame *frame) {
     if (copy_to_user(port_ids, kernel_port_ids, sizeof(kernel_port_ids)) != 0) {
         msgport_delete(p1);
         msgport_delete(p2);
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     }
     return 0;
 }
@@ -533,8 +586,8 @@ int64_t aos_open(const char *name, int64_t mode, struct interrupt_frame *frame) 
 
 int64_t aos_close(int64_t handle, struct interrupt_frame *frame) {
     (void)frame;
-    dos_close((BPTR)handle);
-    return 0;
+    int32_t rc = dos_close((BPTR)handle);
+    return (int64_t)rc;
 }
 
 int64_t aos_read(int64_t handle, void *buf, int64_t count, struct interrupt_frame *frame) {
@@ -572,7 +625,7 @@ int64_t aos_read(int64_t handle, void *buf, int64_t count, struct interrupt_fram
 
     if (got > 0 && copy_to_user(buf, kernel_buf, (size_t)got) != 0) {
         kfree(kernel_buf);
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     }
     kfree(kernel_buf);
     return got;
@@ -588,7 +641,7 @@ int64_t aos_write(int64_t handle, const void *buf, int64_t count, struct interru
         return -AOS_ERR_NO_MEMORY;
     if (copy_from_user(kernel_buf, buf, (size_t)count) != 0) {
         kfree(kernel_buf);
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     }
 
     int64_t written;
@@ -624,7 +677,7 @@ int64_t aos_examine(int64_t lock, void *fib_buf, int64_t fib_size, struct interr
     file_info_block_t kernel_fib;
     int32_t rc = dos_examine((BPTR)lock, &kernel_fib);
     if (rc == 0 && copy_to_user(fib_buf, &kernel_fib, sizeof(kernel_fib)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return (int64_t)rc;
 }
 
@@ -636,7 +689,7 @@ int64_t aos_examine_dir(int64_t lock, void *fib_buf, int64_t fib_size, struct in
     file_info_block_t kernel_fib;
     int32_t rc = dos_ex_next((BPTR)lock, &kernel_fib);
     if (rc == 0 && copy_to_user(fib_buf, &kernel_fib, sizeof(kernel_fib)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return (int64_t)rc;
 }
 
@@ -692,7 +745,7 @@ int64_t aos_lock_cwd(char *buf, int64_t size, struct interrupt_frame *frame) {
     str_copy(cwd, "Work:", sizeof(cwd));
     size_t copy_size = (size_t)size < sizeof(cwd) ? (size_t)size : sizeof(cwd);
     if (copy_to_user(buf, cwd, copy_size) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return 0;
 }
 
@@ -713,7 +766,58 @@ int64_t aos_rename(const char *old_name, const char *new_name, struct interrupt_
 int64_t aos_doio(int64_t handle, uint64_t request, void *arg, struct interrupt_frame *frame) {
     (void)frame;
     if (handle <= 2 && console_tty) {
-        return tty_ioctl(console_tty, request, arg);
+        switch ((uint32_t)request) {
+        case TCGETS: {
+            /* OUT termios: run the driver on a kernel buffer, then copy out. */
+            termios_t kt;
+            int rc = tty_ioctl(console_tty, request, &kt);
+            if (rc == 0) {
+                if (!arg || copy_to_user(arg, &kt, sizeof kt) != 0)
+                    return -AOS_ERR_BAD_ADDRESS;
+            }
+            return rc;
+        }
+        case TCSETS:
+        case TCSETSW:
+        case TCSETSF: {
+            /* IN termios: copy in before the driver sees it. */
+            termios_t kt;
+            if (!arg || copy_from_user(&kt, arg, sizeof kt) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+            return tty_ioctl(console_tty, request, &kt);
+        }
+        default:
+            /* TCFLSH-style value-cast args and unknown requests never
+             * dereference arg (ENOTTY) — safe to pass through. */
+            return tty_ioctl(console_tty, request, arg);
+        }
+    }
+    /* DRM path: only GEM_CREATE/GEM_MMAP dereference arg (fixed 24B structs);
+     * core ioctls ignore it and the rest return ENOTTY. Bounce those two. */
+    {
+        unsigned int nr = (unsigned int)request;
+        if ((nr & 0xff00U) == ((unsigned int)DRM_IOCTL_BASE << 8))
+            nr = _IOC_NR(nr);
+        if (nr == _IOC_NR(DRM_IOCTL_GEM_CREATE)) {
+            struct drm_gem_create kgc;
+            int rc;
+            if (!arg || copy_from_user(&kgc, arg, sizeof kgc) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+            rc = dos_do_io((BPTR)handle, request, &kgc);
+            if (rc == 0 && copy_to_user(arg, &kgc, sizeof kgc) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+            return rc;
+        }
+        if (nr == _IOC_NR(DRM_IOCTL_GEM_MMAP)) {
+            struct drm_gem_mmap kgm;
+            int rc;
+            if (!arg || copy_from_user(&kgm, arg, sizeof kgm) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+            rc = dos_do_io((BPTR)handle, request, &kgm);
+            if (rc == 0 && copy_to_user(arg, &kgm, sizeof kgm) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+            return rc;
+        }
     }
     return dos_do_io((BPTR)handle, request, arg);
 }
@@ -729,8 +833,20 @@ int64_t aos_putstr(int type, char *buf, int len, struct interrupt_frame *frame) 
 
     if (type == 3) return log_get_len();
     if (type == 4) {
+        /* OUT log bytes: read into a kernel buffer, then copy out.
+         * Clamped to the ring size (4096); log_read takes the min anyway. */
         int out_len = 0;
-        log_read(buf, len, &out_len);
+        char *kbuf;
+        if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
+        if (len > 4096) len = 4096;
+        kbuf = (char *)kmalloc((size_t)len);
+        if (!kbuf) return -AOS_ERR_NO_MEMORY;
+        log_read(kbuf, len, &out_len);
+        if (out_len > 0 && copy_to_user(buf, kbuf, (size_t)out_len) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+        kfree(kbuf);
         return out_len;
     }
     return -AOS_ERR_BAD_ARGUMENT;
@@ -828,6 +944,170 @@ int64_t aos_loadseg(const char *path, struct interrupt_frame *frame) {
 }
 
 /* ================================================================== */
+/* Ring-3 spawn — task_create_user (nova task, address space próprio)  */
+/* Ao contrário do LoadSeg (que reencarna a task corrente e nunca      */
+/* retorna), aqui nasce uma task independente: o shell sobrevive.      */
+/* ================================================================== */
+
+#define RING3_STACK_TOP  0x7FFFFFF000ULL
+#define RING3_STACK_SIZE (1024ULL * 1024ULL)
+
+/* Primeiro código que uma user task recém-criada executa (via
+ * task_trampoline, na sua kernel stack, com current == ela). Ativa o
+ * address space próprio e desce para Ring 3. Nunca retorna. */
+static void usermode_launch(void) {
+    if (!current || !current->mm || !current->mm->pml4_phys ||
+        !current->user_entry || !current->user_stack) {
+        serial_print("[RING3] usermode_launch sem contexto valido\n");
+        task_exit(-AOS_ERR_BAD_ARGUMENT);
+    }
+    screen_print("[RING3] launch: ativando PML4 e descendo...\n");
+    vmm_activate_pml4(current->mm->pml4_phys);
+    screen_print("[RING3] launch: iret...\n");
+    jump_to_usermode(current->user_entry, current->user_stack);
+    __builtin_unreachable();
+}
+
+/* Monta mm+PML4+stack e entrega a task ao scheduler. Devolve o PID. */
+static int64_t spawn_user_task(uint64_t new_pml4, mm_struct_t *new_mm,
+                               uint64_t entry) {
+    /* Último portão antes do iret: entry precisa estar numa página USER
+     * mapeada (o loader valida o resto; aqui é defesa em profundidade). */
+    if (entry < VMM_USER_MIN || entry > VMM_USER_MAX)
+        return -AOS_ERR_BAD_ARGUMENT;
+    uint64_t fl = vmm_get_page_flags(new_pml4, entry & ~0xFFFULL);
+    if (!(fl & VMM_FLAG_PRESENT) || !(fl & VMM_FLAG_USER) ||
+        (fl & VMM_FLAG_NX))
+        return -AOS_ERR_BAD_ARGUMENT;
+
+    /* cli/sti: a task nasce RUNNING e o timer poderia escaloná-la antes de
+     * o mm novo estar anexado (single CPU, timer é o único preemptor). */
+    __asm__ volatile("cli" ::: "memory");
+    task_struct_t *t = task_create(usermode_launch, 0);
+    if (!t) {
+        __asm__ volatile("sti" ::: "memory");
+        return -AOS_ERR_NO_MEMORY;
+    }
+    /* task_create herdou o mm corrente: desfaz e anexa o novo. */
+    if (t->mm) t->mm->refcount--;
+    t->mm = new_mm;
+    t->user_entry = entry;
+    t->user_stack = RING3_STACK_TOP;
+    int64_t pid = (int64_t)t->pid;
+    __asm__ volatile("sti" ::: "memory");
+    return pid;
+}
+
+int64_t task_create_user(const char *path) {
+    if (!path || !current) return -AOS_ERR_BAD_ARGUMENT;
+
+    BPTR fh = dos_open(path, MODE_OLDFILE);
+    if (!fh) return -AOS_ERR_NOT_FOUND;
+
+    file_info_block_t fib;
+    dos_examine(fh, &fib);
+    if (fib.fib_DirEntryType > 0) { dos_close(fh); return -AOS_ERR_IS_DIRECTORY; }
+
+    fh = dos_open(path, MODE_OLDFILE);
+    if (!fh) return -AOS_ERR_NOT_FOUND;
+    uint32_t file_size = (uint32_t)fib.fib_Size;
+    if (!file_size) { dos_close(fh); return -AOS_ERR_BAD_ARGUMENT; }
+
+    uint8_t *elf_data = (uint8_t *)kmalloc(file_size);
+    if (!elf_data) { dos_close(fh); return -AOS_ERR_NO_MEMORY; }
+    dos_read(fh, (void *)elf_data, (int32_t)file_size);
+    dos_close(fh);
+
+    mm_struct_t *new_mm = (mm_struct_t *)kmalloc(sizeof(mm_struct_t));
+    if (!new_mm) { kfree(elf_data); return -AOS_ERR_NO_MEMORY; }
+    new_mm->pml4_phys = vmm_create_pml4();
+    if (!new_mm->pml4_phys) { kfree(elf_data); kfree(new_mm); return -AOS_ERR_NO_MEMORY; }
+    new_mm->start_stack = RING3_STACK_TOP;
+    spinlock_init(&new_mm->lock.lock);
+    new_mm->refcount = 1;
+    new_mm->vmas = NULL;
+
+    uint64_t entry = elf_load_mm(new_mm->pml4_phys, elf_data, file_size, new_mm);
+    kfree(elf_data);
+    if (!entry) {
+        vmm_free_pml4(new_mm->pml4_phys);
+        kfree(new_mm);
+        return -AOS_ERR_NOT_EXECUTABLE;
+    }
+
+    /* User stack: 1 página no topo + VMA de 1 MiB com guard (igual LoadSeg). */
+    uint64_t stack_phys = pmm_alloc_block();
+    if (!stack_phys) {
+        vmm_free_pml4(new_mm->pml4_phys);
+        kfree(new_mm);
+        return -AOS_ERR_NO_MEMORY;
+    }
+    if (!vmm_map_page_in_pml4(new_mm->pml4_phys, RING3_STACK_TOP - 4096, stack_phys,
+                         VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX)) {
+        pmm_free_block(stack_phys);
+        vmm_free_pml4(new_mm->pml4_phys);
+        kfree(new_mm);
+        return -AOS_ERR_NO_MEMORY;
+    }
+    vma_add(new_mm, RING3_STACK_TOP - RING3_STACK_SIZE, RING3_STACK_TOP,
+            VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NX,
+            VMA_TYPE_STACK);
+
+    int64_t pid = spawn_user_task(new_mm->pml4_phys, new_mm, entry);
+    if (pid < 0) {
+        vmm_unmap_page_in_pml4(new_mm->pml4_phys, RING3_STACK_TOP - 4096);
+        pmm_free_block(stack_phys);
+        vmm_free_pml4(new_mm->pml4_phys);
+        kfree(new_mm);
+    }
+    return pid;
+}
+
+/* Selftest de boot: roda /bin/hello em Ring 3 e confere o exit code.
+ * O ELF conta falhas das sondas (write válido/inválido, alloc, systime)
+ * e sai com esse contador — 0 = tudo certo, sem panic no caminho. */
+void ring3_selftest(void) {
+    int64_t pid = task_create_user("C:hello");
+    if (pid < 0) {
+        serial_print("[RING3] FAIL: spawn\n");
+        return;
+    }
+
+    int code = -99;
+    int done = 0;
+    uint64_t start = timer_get_ticks();
+    uint64_t last_tick = start;
+    while (timer_get_ticks() - start < 1000) {
+        if (timer_get_ticks() - last_tick > 200) {
+            last_tick = timer_get_ticks();
+            serial_print("[RING3] aguardando task...\n");
+        }
+        task_struct_t *t = NULL;
+        if (task_list) {
+            task_struct_t *it = task_list;
+            do {
+                if (it->pid == (uint64_t)pid) { t = it; break; }
+                it = it->next;
+            } while (it != task_list);
+        }
+        if (t && t->state == TASK_STATE_SUSPENDED) {
+            code = t->exit_code;
+            done = 1;
+            break;
+        }
+        schedule();
+    }
+
+    if (done && code == 0)
+        serial_print("[RING3] ALL CHECKS PASSED (hello exit 0)\n");
+    else if (done) {
+        extern void kprintf(const char *fmt, ...);
+        kprintf("[RING3] FAIL: hello exit=%d\n", (uint64_t)code);
+    } else
+        serial_print("[RING3] FAIL: timeout (task nao encerrou)\n");
+}
+
+/* ================================================================== */
 /* bsdsocket.library — AmigaOS-style BSD socket API                     */
 /* ================================================================== */
 
@@ -838,25 +1118,93 @@ int64_t aos_socket(int domain, int type, int protocol, struct interrupt_frame *f
     return (int64_t)Socket(domain, type, protocol);
 }
 
+/* Cap for a single socket payload bounce (64 KiB, well above MTU).
+ * Larger requests fail with TOO_BIG instead of risking huge kmallocs. */
+#define NET_BUF_MAX (64 * 1024)
+
+static int copy_sockaddr_in(struct sockaddr_in *kdst, const struct sockaddr *usrc,
+                            int tolen) {
+    if (!usrc || tolen < (int)sizeof(struct sockaddr_in)) return -1;
+    return copy_from_user(kdst, usrc, sizeof(*kdst));
+}
+
 int64_t aos_bind(int sockfd, const struct sockaddr *addr, int addrlen, struct interrupt_frame *frame) {
     (void)frame;
-    return (int64_t)Bind(sockfd, addr, addrlen);
+    /* Bounce: never dereference the user sockaddr directly (uaccess P0).
+     * Copy to kstack first, then hand a kernel pointer to the driver.
+     * Inner Bind() stays kernel-pointer-only for CPL0 callers. */
+    struct sockaddr_in kaddr;
+    if (copy_sockaddr_in(&kaddr, addr, addrlen) != 0)
+        return -AOS_ERR_BAD_ADDRESS;
+    return (int64_t)Bind(sockfd, (const struct sockaddr *)&kaddr,
+                         (int)sizeof kaddr);
 }
 
 int64_t aos_send(int sockfd, const void *buf, int len, int flags, const struct sockaddr *dest_addr, int addrlen, struct interrupt_frame *frame) {
-    (void)frame; (void)addrlen;
+    (void)frame;
+    char *kbuf;
+    int rc;
+    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (len > NET_BUF_MAX) return -AOS_ERR_TOO_BIG;
+    kbuf = (char *)kmalloc((size_t)len);
+    if (!kbuf) return -AOS_ERR_NO_MEMORY;
+    if (copy_from_user(kbuf, buf, (size_t)len) != 0) {
+        kfree(kbuf);
+        return -AOS_ERR_BAD_ADDRESS;
+    }
     /* Send() requires connected socket; SendTo() uses dest_addr.
      * We route to SendTo when dest_addr is non-NULL for backward compat. */
-    if (dest_addr)
-        return (int64_t)SendTo(sockfd, buf, len, flags, dest_addr, addrlen);
-    return (int64_t)Send(sockfd, buf, len, flags);
+    if (dest_addr) {
+        struct sockaddr_in kdest;
+        if (copy_sockaddr_in(&kdest, dest_addr, addrlen) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+        rc = SendTo(sockfd, kbuf, len, flags,
+                    (const struct sockaddr *)&kdest, (int)sizeof kdest);
+    } else {
+        rc = Send(sockfd, kbuf, len, flags);
+    }
+    kfree(kbuf);
+    return (int64_t)rc;
 }
 
 int64_t aos_recv(int sockfd, void *buf, int len, int flags, struct sockaddr *src_addr, int *addrlen, struct interrupt_frame *frame) {
     (void)frame;
-    if (src_addr && addrlen)
-        return (int64_t)RecvFrom(sockfd, buf, len, flags, src_addr, addrlen);
-    return (int64_t)Recv(sockfd, buf, len, flags);
+    char *kbuf;
+    int rc;
+    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (len > NET_BUF_MAX) return -AOS_ERR_TOO_BIG;
+    kbuf = (char *)kmalloc((size_t)len);
+    if (!kbuf) return -AOS_ERR_NO_MEMORY;
+    if (src_addr && addrlen) {
+        /* From-address requested: bounce the sockaddr and the length word.
+         * The driver only writes them when rc > 0 — mirror that. */
+        struct sockaddr_in ksrc;
+        int klen;
+        if (copy_from_user(&klen, addrlen, sizeof klen) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+        rc = RecvFrom(sockfd, kbuf, len, flags,
+                      (struct sockaddr *)&ksrc, &klen);
+        if (rc > 0) {
+            if (copy_to_user(buf, kbuf, (size_t)rc) != 0 ||
+                copy_to_user(src_addr, &ksrc, sizeof ksrc) != 0 ||
+                copy_to_user(addrlen, &klen, sizeof klen) != 0) {
+                kfree(kbuf);
+                return -AOS_ERR_BAD_ADDRESS;
+            }
+        }
+    } else {
+        rc = Recv(sockfd, kbuf, len, flags);
+        if (rc > 0 && copy_to_user(buf, kbuf, (size_t)rc) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+    }
+    kfree(kbuf);
+    return (int64_t)rc;
 }
 
 int64_t aos_close_socket(int64_t fd, struct interrupt_frame *frame) {
@@ -867,11 +1215,26 @@ int64_t aos_close_socket(int64_t fd, struct interrupt_frame *frame) {
 int64_t aos_select(int64_t width, uint64_t readfds_ptr, uint64_t writefds_ptr,
                    uint64_t exceptfds_ptr, uint64_t timeout_ptr, struct interrupt_frame *frame) {
     (void)frame;
-    fd_set *rfds = (fd_set *)readfds_ptr;
-    fd_set *wfds = (fd_set *)writefds_ptr;
-    fd_set *efds = (fd_set *)exceptfds_ptr;
-    struct timeval *tv = (struct timeval *)timeout_ptr;
-    return (int64_t)Select((int)width, rfds, wfds, efds, tv);
+    (void)writefds_ptr;
+    (void)exceptfds_ptr;
+    (void)timeout_ptr;
+    /* Bounce: inner Select() only implements readfds polling; wfds/efds/
+     * timeout are currently ignored, so never touch those user pointers.
+     * Copy readfds IN, call with kernel pointer, copy result OUT. */
+    bool has_rfds = (readfds_ptr != 0);
+    fd_set k_rfds;
+    if (has_rfds) {
+        if (copy_from_user(&k_rfds, (const void *)readfds_ptr,
+                           sizeof k_rfds) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+    }
+    int rc = Select((int)width, has_rfds ? &k_rfds : NULL,
+                    NULL, NULL, NULL);
+    if (rc >= 0 && has_rfds) {
+        if (copy_to_user((void *)readfds_ptr, &k_rfds, sizeof k_rfds) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+    }
+    return (int64_t)rc;
 }
 
 int64_t aos_setsockopt(int64_t sockfd, int64_t level, int64_t optname,
@@ -884,42 +1247,176 @@ int64_t aos_setsockopt(int64_t sockfd, int64_t level, int64_t optname,
 int64_t aos_getsockopt(int64_t sockfd, int64_t level, int64_t optname,
                        uint64_t optval_ptr, uint64_t optlen_ptr, struct interrupt_frame *frame) {
     (void)frame;
-    int *optlen = (int *)optlen_ptr;
-    return (int64_t)GetSockOpt((int)sockfd, (int)level, (int)optname,
-                               (void *)optval_ptr, optlen);
+    /* Bounce: optlen is IN/OUT int, optval is OUT (max 4B for current int
+     * options). Driver only writes when *optlen >= 4 — mirror that so a
+     * small buffer never leaks kernel stack to userspace. */
+    int klen;
+    int kval = 0;
+    if (!optval_ptr || !optlen_ptr)
+        return -AOS_ERR_BAD_ADDRESS;
+    if (copy_from_user(&klen, (const void *)optlen_ptr, sizeof klen) != 0)
+        return -AOS_ERR_BAD_ADDRESS;
+    int rc = GetSockOpt((int)sockfd, (int)level, (int)optname, &kval, &klen);
+    if (rc == 0) {
+        /* Inner sets klen=4 only when it actually wrote kval; propagate
+         * klen always, kval only when written. */
+        if (klen == (int)sizeof kval) {
+            if (copy_to_user((void *)optval_ptr, &kval, sizeof kval) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+        }
+        if (copy_to_user((void *)optlen_ptr, &klen, sizeof klen) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+    }
+    return (int64_t)rc;
 }
 
 int64_t aos_get_socket_addr(int64_t sockfd, uint64_t name_ptr, uint64_t namelen_ptr,
                             struct interrupt_frame *frame) {
     (void)frame;
-    int *namelen = (int *)namelen_ptr;
-    return (int64_t)GetSocketAddr((int)sockfd, (struct sockaddr *)name_ptr, namelen);
+    /* Bounce: namelen IN/OUT + sockaddr OUT. Only copy OUT on success,
+     * mirroring the driver (which only writes when rc==0). */
+    struct sockaddr_in kname;
+    int klen;
+    if (!name_ptr || !namelen_ptr)
+        return -AOS_ERR_BAD_ADDRESS;
+    if (copy_from_user(&klen, (const void *)namelen_ptr, sizeof klen) != 0)
+        return -AOS_ERR_BAD_ADDRESS;
+    int rc = GetSocketAddr((int)sockfd, (struct sockaddr *)&kname, &klen);
+    if (rc == 0) {
+        if (copy_to_user((void *)name_ptr, &kname, sizeof kname) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+        if (copy_to_user((void *)namelen_ptr, &klen, sizeof klen) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+    }
+    return (int64_t)rc;
 }
 
 int64_t aos_socketioctl(int64_t sockfd, int64_t request, uint64_t arg_ptr,
                         struct interrupt_frame *frame) {
     (void)frame;
-    return (int64_t)SocketIOCtl((int)sockfd, (int)request, (void *)arg_ptr);
+    /* Bounce: FIONREAD is OUT int; FIONBIO ignores arg (no touch).
+     * Anything else falls through to the driver for BAD_ARGUMENT. */
+    if ((int)request == FIONREAD) {
+        int knbytes = 0;
+        if (!arg_ptr)
+            return -AOS_ERR_BAD_ADDRESS;
+        int rc = SocketIOCtl((int)sockfd, (int)request, &knbytes);
+        if (rc == 0) {
+            if (copy_to_user((void *)arg_ptr, &knbytes, sizeof knbytes) != 0)
+                return -AOS_ERR_BAD_ADDRESS;
+        }
+        return (int64_t)rc;
+    }
+    if ((int)request == FIONBIO) {
+        /* Accept without touching user memory (no non-blocking support yet,
+         * matches driver stub behavior). */
+        return (int64_t)SocketIOCtl((int)sockfd, (int)request, NULL);
+    }
+    return (int64_t)SocketIOCtl((int)sockfd, (int)request, NULL);
 }
 
 int64_t aos_socket_base_tags(uint64_t taglist_ptr, struct interrupt_frame *frame) {
-    (void)frame;
-    return (int64_t)SocketBaseTags((struct TagItem *)taglist_ptr);
+    /* Bounce: TagItem array is user memory terminated by TAG_DONE.
+     * Copy one item at a time with a hard cap so a missing TAG_DONE
+     * can't OOB/travar o kernel (old code walked unbounded).
+     * SBT_Task hijacks sb_Task — only CPL0 may use it; Ring3 gets
+     * NO_PERMISSION. Inner SocketBaseTags() stays kernel-pointer-only. */
+#define SOCKBT_TAGS_MAX 32
+    struct TagItem ktags[SOCKBT_TAGS_MAX + 1];
+    bool from_user = caller_is_user(frame);
+
+    if (!taglist_ptr)
+        return (int64_t)SocketBaseTags(NULL);
+
+    for (int i = 0; i < SOCKBT_TAGS_MAX; i++) {
+        const struct TagItem *uitem =
+            (const struct TagItem *)(taglist_ptr + (uint64_t)i * sizeof(struct TagItem));
+        if (copy_from_user(&ktags[i], uitem, sizeof ktags[i]) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
+        if (ktags[i].ti_Tag == TAG_DONE) {
+            if (from_user) {
+                for (int j = 0; j <= i; j++) {
+                    if (ktags[j].ti_Tag == SBT_Task)
+                        return -AOS_ERR_NO_PERMISSION;
+                }
+            }
+            return (int64_t)SocketBaseTags(ktags);
+        }
+        /* TAG_IGNORE and unknown tags are preserved; inner ignores them.
+         * Only SBT_Task is security-sensitive (validated above). */
+    }
+    /* No TAG_DONE within cap — refuse instead of walking into unmapped mem. */
+    return -AOS_ERR_TOO_BIG;
+#undef SOCKBT_TAGS_MAX
 }
 
 int64_t aos_sendto(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
                    uint64_t to_ptr, int64_t tolen, struct interrupt_frame *frame) {
     (void)frame;
-    return (int64_t)SendTo((int)sockfd, (const void *)buf_ptr, (int)len, (int)flags,
-                           (const struct sockaddr *)to_ptr, (int)tolen);
+    const void *buf = (const void *)buf_ptr;
+    const struct sockaddr *to = (const struct sockaddr *)to_ptr;
+    char *kbuf;
+    int rc;
+    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (len > NET_BUF_MAX) return -AOS_ERR_TOO_BIG;
+    kbuf = (char *)kmalloc((size_t)len);
+    if (!kbuf) return -AOS_ERR_NO_MEMORY;
+    if (copy_from_user(kbuf, buf, (size_t)len) != 0) {
+        kfree(kbuf);
+        return -AOS_ERR_BAD_ADDRESS;
+    }
+    if (to) {
+        struct sockaddr_in kdest;
+        if (copy_sockaddr_in(&kdest, to, (int)tolen) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+        rc = SendTo((int)sockfd, kbuf, (int)len, (int)flags,
+                    (const struct sockaddr *)&kdest, (int)sizeof kdest);
+    } else {
+        rc = SendTo((int)sockfd, kbuf, (int)len, (int)flags, NULL, 0);
+    }
+    kfree(kbuf);
+    return (int64_t)rc;
 }
 
 int64_t aos_recvfrom(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flags,
                      uint64_t from_ptr, uint64_t fromlen_ptr, struct interrupt_frame *frame) {
     (void)frame;
-    int *fromlen = (int *)fromlen_ptr;
-    return (int64_t)RecvFrom((int)sockfd, (void *)buf_ptr, (int)len, (int)flags,
-                             (struct sockaddr *)from_ptr, fromlen);
+    void *buf = (void *)buf_ptr;
+    char *kbuf;
+    int rc;
+    if (!buf || len <= 0) return -AOS_ERR_BAD_ARGUMENT;
+    if (len > NET_BUF_MAX) return -AOS_ERR_TOO_BIG;
+    kbuf = (char *)kmalloc((size_t)len);
+    if (!kbuf) return -AOS_ERR_NO_MEMORY;
+    if (from_ptr && fromlen_ptr) {
+        struct sockaddr_in kfrom;
+        int klen;
+        if (copy_from_user(&klen, (const void *)fromlen_ptr, sizeof klen) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+        rc = RecvFrom((int)sockfd, kbuf, (int)len, (int)flags,
+                      (struct sockaddr *)&kfrom, &klen);
+        if (rc > 0) {
+            if (copy_to_user((void *)from_ptr, &kfrom, sizeof kfrom) != 0 ||
+                copy_to_user((void *)fromlen_ptr, &klen, sizeof klen) != 0 ||
+                copy_to_user(buf, kbuf, (size_t)rc) != 0) {
+                kfree(kbuf);
+                return -AOS_ERR_BAD_ADDRESS;
+            }
+        }
+    } else {
+        /* No address requested: the driver never touches from/fromlen. */
+        rc = RecvFrom((int)sockfd, kbuf, (int)len, (int)flags, NULL, NULL);
+        if (rc > 0 && copy_to_user(buf, kbuf, (size_t)rc) != 0) {
+            kfree(kbuf);
+            return -AOS_ERR_BAD_ADDRESS;
+        }
+    }
+    kfree(kbuf);
+    return (int64_t)rc;
 }
 
 /* ================================================================== */
@@ -931,20 +1428,32 @@ int64_t aos_recvfrom(int64_t sockfd, uint64_t buf_ptr, int64_t len, int64_t flag
 
 int64_t aos_assign(const char *name, const char *path, int64_t op, struct interrupt_frame *frame) {
     (void)frame;
+    char kname[ASSIGN_MAX_NAME];
     if (!name) return -AOS_ERR_BAD_ARGUMENT;
-    if (op == ASSIGN_SET)
-        return (int64_t)assign_set(name, path);
-    if (op == ASSIGN_UNSET)
-        return (int64_t)assign_unset(name);
-    if (op == ASSIGN_GET) {
+    /* Bounce user strings: assign_*() dereferences with strcpy/strcmp and
+     * is also called from kernel paths (dogin, dos) with kernel strings,
+     * so the copy lives here at the trust boundary, not inside assign.c. */
+    if (strncpy_from_user(kname, name, sizeof(kname), NULL) != 0)
+        return -AOS_ERR_BAD_ARGUMENT;
+    if (op == ASSIGN_SET) {
+        char kpath[ASSIGN_MAX_PATH];
         if (!path) return -AOS_ERR_BAD_ARGUMENT;
+        if (strncpy_from_user(kpath, path, sizeof(kpath), NULL) != 0)
+            return -AOS_ERR_BAD_ARGUMENT;
+        return (int64_t)assign_set(kname, kpath);
+    }
+    if (op == ASSIGN_UNSET)
+        return (int64_t)assign_unset(kname);
+    if (op == ASSIGN_GET) {
         char buf[ASSIGN_MAX_PATH];
-        if (assign_lookup(name, buf, sizeof buf) != 0)
+        size_t len = 0;
+        if (!path) return -AOS_ERR_BAD_ARGUMENT;
+        if (assign_lookup(kname, buf, sizeof buf) != 0)
             return -AOS_ERR_NOT_FOUND;
-        char *dst = (char *)path;
-        int i = 0;
-        while (buf[i] && i < ASSIGN_MAX_PATH - 1) *dst++ = buf[i++];
-        *dst = '\0';
+        while (len < sizeof buf && buf[len]) len++;
+        if (len >= sizeof buf) return -AOS_ERR_BAD_ARGUMENT;
+        if (copy_to_user((void *)path, buf, len + 1) != 0)
+            return -AOS_ERR_BAD_ADDRESS;
         return 0;
     }
     return -AOS_ERR_BAD_ARGUMENT;
@@ -976,7 +1485,7 @@ int64_t aos_put_msg(int64_t id, const msg_t *msg, struct interrupt_frame *frame)
     (void)frame;
     msg_t kernel_msg;
     if (!msg || copy_from_user(&kernel_msg, msg, sizeof(kernel_msg)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return msgport_put((int32_t)id, &kernel_msg);
 }
 
@@ -992,7 +1501,7 @@ int64_t aos_get_msg(int64_t id, msg_t *msg, int64_t *token, struct interrupt_fra
         return rc;
     if (copy_to_user(msg, &kernel_msg, sizeof(kernel_msg)) != 0 ||
         copy_to_user(token, &kernel_token, sizeof(kernel_token)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return rc;
 }
 
@@ -1005,6 +1514,6 @@ int64_t aos_reply_msg(int64_t token, const msg_t *msg, struct interrupt_frame *f
     (void)frame;
     msg_t kernel_msg;
     if (!msg || copy_from_user(&kernel_msg, msg, sizeof(kernel_msg)) != 0)
-        return -AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ADDRESS;
     return msgport_reply(token, &kernel_msg);
 }

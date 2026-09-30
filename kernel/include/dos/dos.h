@@ -53,9 +53,13 @@ uint64_t dos_handle_owner(BPTR handle);
 BPTR  dos_input(void);
 BPTR  dos_output(void);
 
-/* File operations */
+/* DOS per-task quota (see dos.c). */
+#define DOS_MAX_PER_TASK 64
+
+/* File operations (close returns 0 ok, -AOS_ERR_NO_PERMISSION if @handle
+ * belongs to another task; unknown handles are ignored with 0). */
 BPTR    dos_open(const char *name, int32_t mode);
-void    dos_close(BPTR handle);
+int32_t dos_close(BPTR handle);
 int32_t dos_read(BPTR handle, void *buffer, int32_t length);
 int32_t dos_write(BPTR handle, const void *buffer, int32_t length);
 int32_t dos_seek(BPTR handle, int32_t position, int32_t offset_type);

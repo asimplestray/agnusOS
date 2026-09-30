@@ -42,7 +42,11 @@ typedef struct kreply {
     kmsg_t *msg;      /* received message kept alive until Reply */
     int32_t reply_port;
     int64_t token;
+    uint64_t owner;   /* pid that did Get (only it may Reply) */
 } kreply_t;
+
+/* Quotas live in <msgport.h> (MSGPORT_MAX_*). Put() beyond MAX_QUEUE
+ * fails with -1 (backpressure) instead of growing the FIFO unbounded. */
 
 static msg_port_t *port_list = NULL;
 static kreply_t   *reply_list = NULL;
@@ -58,8 +62,43 @@ static msg_port_t *find_port_locked(int32_t id)
     return NULL;
 }
 
+static uint64_t caller_pid(void) {
+    return current ? current->pid : 0;
+}
+
+static int ports_owned_by(uint64_t pid) {
+    int n = 0;
+    for (msg_port_t *p = port_list; p; p = p->next)
+        if (p->owner == pid)
+            n++;
+    return n;
+}
+
+static int replies_owned_by(uint64_t pid) {
+    int n = 0;
+    for (kreply_t *kr = reply_list; kr; kr = kr->next)
+        if (kr->owner == pid)
+            n++;
+    return n;
+}
+
+static int queue_len_locked(msg_port_t *port) {
+    int n = 0;
+    for (kmsg_t *km = port->head; km; km = km->next)
+        n++;
+    return n;
+}
+
 int64_t msgport_create(const char *name)
 {
+    uint64_t pid = caller_pid();
+    unsigned long qflags;
+    spin_lock_irqsave(&registry_lock, &qflags);
+    int owned = ports_owned_by(pid);
+    spin_unlock_irqrestore(&registry_lock, qflags);
+    if (pid != 0 && owned >= MSGPORT_MAX_PER_TASK)
+        return -1;
+
     msg_port_t *port = kmalloc(sizeof(msg_port_t));
     if (!port)
         return -1;
@@ -84,6 +123,19 @@ int64_t msgport_create(const char *name)
 
     unsigned long flags;
     spin_lock_irqsave(&registry_lock, &flags);
+    /* Guard against int32 wraparound after ~2B creates: never hand out
+     * id <= 0 (0 means "no port" for callers). Best-effort reuse scan. */
+    if (next_port_id <= 0) {
+        int32_t cand = 1;
+        while (cand > 0 && find_port_locked(cand))
+            cand++;
+        if (cand <= 0) {
+            spin_unlock_irqrestore(&registry_lock, flags);
+            kfree(port);
+            return -1;
+        }
+        next_port_id = cand;
+    }
     port->id = next_port_id++;
     port->next = port_list;
     port_list = port;
@@ -101,6 +153,13 @@ int64_t msgport_delete(int32_t id)
         pp = &(*pp)->next;
     msg_port_t *port = *pp;
     if (!port) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        return -1;
+    }
+    /* Only the owner (or pid 0 kernel context) may delete. Senders with
+     * just the id cannot tear down someone else's queue. */
+    uint64_t pid = caller_pid();
+    if (pid != 0 && port->owner != 0 && port->owner != pid) {
         spin_unlock_irqrestore(&registry_lock, flags);
         return -1;
     }
@@ -154,8 +213,59 @@ void msgport_task_cleanup(struct task_struct *t)
         spin_unlock_irqrestore(&registry_lock, flags);
         if (!victim)
             break;
-        msgport_delete(victim);
+        /* Bypass owner check: the owner is dead, cleanup is authoritative. */
+        msg_port_t *dead = NULL;
+        spin_lock_irqsave(&registry_lock, &flags);
+        msg_port_t **pp = &port_list;
+        while (*pp && (*pp)->id != victim)
+            pp = &(*pp)->next;
+        dead = *pp;
+        if (dead)
+            *pp = dead->next;
+        /* Purge replies targeting the dead port while holding the lock. */
+        kreply_t **rp = &reply_list;
+        while (*rp) {
+            kreply_t *kr = *rp;
+            if (kr->reply_port == victim || kr->owner == pid) {
+                *rp = kr->next;
+                kfree(kr->msg);
+                kfree(kr);
+            } else {
+                rp = &kr->next;
+            }
+        }
+        /* Purge remaining tokens owned by the dead task (got but never
+         * replied): without this they leak one kmsg each forever. */
+        if (!dead) {
+            spin_unlock_irqrestore(&registry_lock, flags);
+            continue;
+        }
+        kmsg_t *km = dead->head;
+        spin_unlock_irqrestore(&registry_lock, flags);
+        while (km) {
+            kmsg_t *next = km->next;
+            kfree(km);
+            km = next;
+        }
+        wake_up(&dead->wait);
+        kfree(dead);
     }
+    /* Final sweep: tokens owned by pid whose port outlived them
+     * (e.g. reply_port belongs to another task that is still alive). */
+    unsigned long flags;
+    spin_lock_irqsave(&registry_lock, &flags);
+    kreply_t **rp = &reply_list;
+    while (*rp) {
+        kreply_t *kr = *rp;
+        if (kr->owner == pid) {
+            *rp = kr->next;
+            kfree(kr->msg);
+            kfree(kr);
+        } else {
+            rp = &kr->next;
+        }
+    }
+    spin_unlock_irqrestore(&registry_lock, flags);
 }
 
 int64_t msgport_put(int32_t id, const msg_t *msg)
@@ -179,6 +289,19 @@ int64_t msgport_put(int32_t id, const msg_t *msg)
 
     msg_port_t *port = find_port_locked(id);
     if (!port) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        kfree(km);
+        return -1;
+    }
+    /* Backpressure: never queue without bound (each kmsg is kernel heap). */
+    if (queue_len_locked(port) >= MSGPORT_MAX_QUEUE) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        kfree(km);
+        return -1;
+    }
+    /* Validate reply target early: a bogus reply_port would otherwise
+     * surface only at Reply time, after the sender already succeeded. */
+    if (msg->reply_port >= 0 && !find_port_locked(msg->reply_port)) {
         spin_unlock_irqrestore(&registry_lock, flags);
         kfree(km);
         return -1;
@@ -210,6 +333,19 @@ int64_t msgport_get(int32_t id, msg_t *msg, int64_t *token)
         kfree(kr);
         return -1;
     }
+    /* Only the owner may drain its queue (Put stays open to any sender). */
+    uint64_t pid = caller_pid();
+    if (pid != 0 && port->owner != 0 && port->owner != pid) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        kfree(kr);
+        return -1;
+    }
+    /* Bound pending replies per getter: each pending reply pins one kmsg. */
+    if (pid != 0 && replies_owned_by(pid) >= MSGPORT_MAX_REPLIES_PER_TASK) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        kfree(kr);
+        return -1;
+    }
 
     kmsg_t *km = port->head;
     if (!km) {
@@ -235,6 +371,10 @@ int64_t msgport_get(int32_t id, msg_t *msg, int64_t *token)
         kr->msg = km;
         kr->reply_port = km->reply_port;
         kr->token = next_token++;
+        /* Token wraparound: never hand out 0 (means "no reply expected"). */
+        if (next_token <= 0)
+            next_token = 1;
+        kr->owner = caller_pid();
         reply_list = kr;
         if (token)
             *token = kr->token;
@@ -253,9 +393,16 @@ int64_t msgport_wait(int32_t id, int64_t timeout_ms)
     unsigned long flags;
     spin_lock_irqsave(&registry_lock, &flags);
     msg_port_t *port = find_port_locked(id);
-    spin_unlock_irqrestore(&registry_lock, flags);
-    if (!port)
+    if (!port) {
+        spin_unlock_irqrestore(&registry_lock, flags);
         return -1;
+    }
+    uint64_t pid = caller_pid();
+    if (pid != 0 && port->owner != 0 && port->owner != pid) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        return -1;
+    }
+    spin_unlock_irqrestore(&registry_lock, flags);
 
     uint64_t deadline = 0;
     if (timeout_ms > 0)
@@ -305,6 +452,14 @@ int64_t msgport_reply(int64_t token, const msg_t *msg)
         rp = &(*rp)->next;
     kreply_t *kr = *rp;
     if (!kr) {
+        spin_unlock_irqrestore(&registry_lock, flags);
+        kfree(km);
+        return -1;
+    }
+    /* Single-reply token is bound to the task that did Get. Any other
+     * task presenting the token gets -1 (no cross-task reply spoofing). */
+    uint64_t pid = caller_pid();
+    if (pid != 0 && kr->owner != 0 && kr->owner != pid) {
         spin_unlock_irqrestore(&registry_lock, flags);
         kfree(km);
         return -1;

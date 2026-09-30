@@ -13,12 +13,46 @@
 /* ------------------------------------------------------------------ */
 
 #define DOS_MAX_HANDLES  256
+/* Per-task quota: bounds kernel memory per process (each handle holds a
+ * file_t + VFS state). Global table stays 256; a single task can own at
+ * most 64. aos_open() surfaces exhaustion as -AOS_ERR_NO_MEMORY (EMFILE). */
+#define DOS_MAX_PER_TASK  64
 static dos_handle_t handle_table[DOS_MAX_HANDLES];
 static int32_t last_error = 0;
 
 /* Standard I/O */
 BPTR dos_input(void)  { return 0; }
 BPTR dos_output(void) { return 1; }
+
+/* Internal: get handle from BPTR. Returns pointer or NULL. */
+static dos_handle_t *get_handle(BPTR bptr) {
+    if (bptr >= (BPTR)DOS_MAX_HANDLES) return NULL;
+    dos_handle_t *h = &handle_table[bptr];
+    if (h->dh_Node == NULL) return NULL;
+    return h;
+}
+
+/* Cross-task isolation: a task may only use handles it owns. Handles with
+ * owner 0 are pre-scheduler kernel resources (also the 0/1/2 stdio
+ * sentinels, which never reach here — stdio goes through the TTY). */
+static int handle_owned_by_current(dos_handle_t *h) {
+    if (!h)
+        return 0;
+    if (h->dh_Owner == 0)
+        return 1;
+    if (current && h->dh_Owner == current->pid)
+        return 1;
+    return 0;
+}
+
+static uint32_t handle_count_for_owner(uint64_t owner) {
+    uint32_t n = 0;
+    for (int i = 3; i < DOS_MAX_HANDLES; i++) {
+        if (handle_table[i].dh_Node != NULL && handle_table[i].dh_Owner == owner)
+            n++;
+    }
+    return n;
+}
 
 /* Internal: allocate a handle slot. Returns 1-based BPTR or 0 on fail.
  * The new handle is tagged with the current task's pid for teardown.
@@ -27,6 +61,8 @@ static BPTR alloc_handle(void) {
     uint64_t owner = 0;
     if (current)
         owner = current->pid;
+    if (owner != 0 && handle_count_for_owner(owner) >= DOS_MAX_PER_TASK)
+        return 0;
     for (int i = 3; i < DOS_MAX_HANDLES; i++) {
         if (handle_table[i].dh_Node == NULL) {
             handle_table[i].dh_File     = NULL;
@@ -38,14 +74,6 @@ static BPTR alloc_handle(void) {
         }
     }
     return 0;
-}
-
-/* Internal: get handle from BPTR. Returns pointer or NULL. */
-static dos_handle_t *get_handle(BPTR bptr) {
-    if (bptr >= (BPTR)DOS_MAX_HANDLES) return NULL;
-    dos_handle_t *h = &handle_table[bptr];
-    if (h->dh_Node == NULL) return NULL;
-    return h;
 }
 
 /* ------------------------------------------------------------------ */
@@ -104,9 +132,13 @@ BPTR dos_open(const char *name, int32_t mode) {
 /* dos_close — AmigaDOS file close                                      */
 /* ------------------------------------------------------------------ */
 
-void dos_close(BPTR handle) {
+int32_t dos_close(BPTR handle) {
     dos_handle_t *h = get_handle(handle);
-    if (!h) return;
+    if (!h) return 0;
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
+    }
 
     serial_print("DOS: Close BPTR=");
     char buf[16];
@@ -118,6 +150,7 @@ void dos_close(BPTR handle) {
     h->dh_File = NULL;
     h->dh_Node = NULL;
     h->dh_Owner = 0;
+    return 0;
 }
 
 uint64_t dos_handle_owner(BPTR handle) {
@@ -153,6 +186,10 @@ int32_t dos_do_io(BPTR handle, uint64_t request, void *arg) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -AOS_ERR_BAD_ARGUMENT;
     }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
+    }
 
     int32_t rc = (int32_t)vfs_file_ioctl(h->dh_File, request, arg);
     if (rc < 0)
@@ -169,6 +206,10 @@ int32_t dos_read(BPTR handle, void *buffer, int32_t length) {
     if (!h || !buffer || length <= 0) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -1;
+    }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
     }
 
     uint32_t got = vfs_file_read(h->dh_File, (uint32_t)length,
@@ -188,6 +229,10 @@ int32_t dos_write(BPTR handle, const void *buffer, int32_t length) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -1;
     }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
+    }
 
     uint32_t written = vfs_file_write(h->dh_File, (uint32_t)length,
                                       (const uint8_t *)buffer);
@@ -205,6 +250,10 @@ int32_t dos_seek(BPTR handle, int32_t position, int32_t offset_type) {
     if (!h) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -1;
+    }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
     }
 
     int64_t new_pos = (int64_t)h->dh_Position;
@@ -239,6 +288,10 @@ int32_t dos_flush(BPTR handle) {
     if (!h || !h->dh_File) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -AOS_ERR_BAD_ARGUMENT;
+    }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
     }
 
     /* ATA is currently the only persistent block backend. ata_sync() first
@@ -292,6 +345,10 @@ int32_t dos_examine(BPTR lock, file_info_block_t *fib) {
         last_error = AOS_ERR_NOT_FOUND;
         return -1;
     }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
+    }
 
     node_to_fib(h->dh_Node, fib);
     return 0;
@@ -307,6 +364,10 @@ int32_t dos_ex_next(BPTR lock, file_info_block_t *fib) {
     if (!h || !h->dh_Node) {
         last_error = AOS_ERR_NOT_FOUND;
         return -1;
+    }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
     }
 
     if (!(h->dh_Node->flags & VFS_DIRECTORY)) {
@@ -534,6 +595,10 @@ int32_t dos_name_from_lock(BPTR lock, char *name, int32_t len) {
     if (!h || !h->dh_Node || !name || len <= 0) {
         last_error = AOS_ERR_BAD_ARGUMENT;
         return -1;
+    }
+    if (!handle_owned_by_current(h)) {
+        last_error = AOS_ERR_NO_PERMISSION;
+        return -AOS_ERR_NO_PERMISSION;
     }
 
     /* For now, return the node's name */
