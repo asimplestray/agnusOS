@@ -7,6 +7,8 @@
 /* Forward declaration */
 struct vfs_node;
 typedef struct vfs_node vfs_node_t;
+struct file;
+typedef struct file file_t;
 
 /* Size of FileName buffer in FileInfoBlock */
 #define DOS_FILENAMESIZE 108
@@ -34,10 +36,18 @@ typedef struct file_info_block {
 /* BPTR = file handle (opaque to userspace) */
 typedef struct dos_handle {
     vfs_node_t  *dh_Node;
+    file_t      *dh_File;
     uint32_t     dh_Position;
     uint32_t     dh_Flags;
     int32_t      dh_ErrCode;
+    uint64_t     dh_Owner;   /* pid of owning task (0 = free/reserved) */
 } dos_handle_t;
+
+struct task_struct;
+
+/* Close all DOS handles owned by @t (called from task_exit). */
+void dos_task_cleanup(struct task_struct *t);
+uint64_t dos_handle_owner(BPTR handle);
 
 /* Standard I/O */
 BPTR  dos_input(void);
@@ -50,6 +60,7 @@ int32_t dos_read(BPTR handle, void *buffer, int32_t length);
 int32_t dos_write(BPTR handle, const void *buffer, int32_t length);
 int32_t dos_seek(BPTR handle, int32_t position, int32_t offset_type);
 int32_t dos_flush(BPTR handle);
+int32_t dos_do_io(BPTR handle, uint64_t request, void *arg);
 
 /* Directory operations */
 int32_t dos_examine(BPTR lock, file_info_block_t *fib);

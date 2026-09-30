@@ -52,6 +52,10 @@ int64_t msgport_reply(int64_t token, const msg_t *msg);
 /* Dump ports + pending replies into buf (used by /proc/ports). */
 int  msgport_dump(char *buf, int max);
 
+/* Delete all ports owned by @t (called from task_exit). */
+struct task_struct;
+void msgport_task_cleanup(struct task_struct *t);
+
 /* Boot-time selftest. */
 void msgport_test(void);
 

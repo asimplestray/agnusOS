@@ -6,6 +6,7 @@
 #include <kheap.h>
 #include <string.h>
 #include <serial.h>
+#include <ata.h>
 
 /* ------------------------------------------------------------------ */
 /* Handle table — maps BPTR (1-based index) to dos_handle_t            */
@@ -19,13 +20,20 @@ static int32_t last_error = 0;
 BPTR dos_input(void)  { return 0; }
 BPTR dos_output(void) { return 1; }
 
-/* Internal: allocate a handle slot. Returns 1-based BPTR or 0 on fail. */
+/* Internal: allocate a handle slot. Returns 1-based BPTR or 0 on fail.
+ * The new handle is tagged with the current task's pid for teardown.
+ * PID 0 means kernel/no-task context (never auto-closed). */
 static BPTR alloc_handle(void) {
+    uint64_t owner = 0;
+    if (current)
+        owner = current->pid;
     for (int i = 3; i < DOS_MAX_HANDLES; i++) {
         if (handle_table[i].dh_Node == NULL) {
+            handle_table[i].dh_File     = NULL;
             handle_table[i].dh_Position = 0;
             handle_table[i].dh_Flags    = 0;
             handle_table[i].dh_ErrCode  = 0;
+            handle_table[i].dh_Owner    = owner;
             return (BPTR)(i);
         }
     }
@@ -74,8 +82,12 @@ BPTR dos_open(const char *name, int32_t mode) {
     h->dh_Flags    = (uint32_t)mode;
     h->dh_ErrCode  = 0;
 
-    /* Call VFS open */
-    vfs_open(node);
+    h->dh_File = vfs_file_open(node, (uint32_t)mode);
+    if (!h->dh_File) {
+        h->dh_Node = NULL;
+        last_error = AOS_ERR_NO_MEMORY;
+        return 0;
+    }
 
     serial_print("DOS: Open \"");
     serial_print(name);
@@ -102,8 +114,50 @@ void dos_close(BPTR handle) {
     serial_print(buf);
     serial_print("\n");
 
-    vfs_close(h->dh_Node);
+    vfs_file_close(h->dh_File);
+    h->dh_File = NULL;
     h->dh_Node = NULL;
+    h->dh_Owner = 0;
+}
+
+uint64_t dos_handle_owner(BPTR handle) {
+    dos_handle_t *h = get_handle(handle);
+    if (!h)
+        return 0;
+    return h->dh_Owner;
+}
+
+/* Close every handle owned by @t. Called once from task_exit() before the
+ * task is descheduled. Single-CPU safe: no runqueue lock held here, only
+ * local iteration + vfs_file_close (which takes its own locks). */
+void dos_task_cleanup(struct task_struct *t) {
+    if (!t)
+        return;
+    uint64_t pid = t->pid;
+    for (int i = 3; i < DOS_MAX_HANDLES; i++) {
+        if (handle_table[i].dh_Node != NULL &&
+            handle_table[i].dh_Node != (vfs_node_t *)(uintptr_t)0xFFFFFFFF &&
+            handle_table[i].dh_Owner == pid) {
+            vfs_file_close(handle_table[i].dh_File);
+            handle_table[i].dh_File = NULL;
+            handle_table[i].dh_Node = NULL;
+            handle_table[i].dh_Owner = 0;
+            handle_table[i].dh_Position = 0;
+        }
+    }
+}
+
+int32_t dos_do_io(BPTR handle, uint64_t request, void *arg) {
+    dos_handle_t *h = get_handle(handle);
+    if (!h || !h->dh_File) {
+        last_error = AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ARGUMENT;
+    }
+
+    int32_t rc = (int32_t)vfs_file_ioctl(h->dh_File, request, arg);
+    if (rc < 0)
+        last_error = -rc;
+    return rc;
 }
 
 /* ------------------------------------------------------------------ */
@@ -117,9 +171,9 @@ int32_t dos_read(BPTR handle, void *buffer, int32_t length) {
         return -1;
     }
 
-    uint32_t got = vfs_read(h->dh_Node, (uint32_t)h->dh_Position,
-                             (uint32_t)length, (uint8_t *)buffer);
-    h->dh_Position += got;
+    uint32_t got = vfs_file_read(h->dh_File, (uint32_t)length,
+                                 (uint8_t *)buffer);
+    h->dh_Position = (uint32_t)h->dh_File->position;
 
     return (int32_t)got;
 }
@@ -135,9 +189,9 @@ int32_t dos_write(BPTR handle, const void *buffer, int32_t length) {
         return -1;
     }
 
-    uint32_t written = vfs_write(h->dh_Node, (uint32_t)h->dh_Position,
-                                  (uint32_t)length, (const uint8_t *)buffer);
-    h->dh_Position += written;
+    uint32_t written = vfs_file_write(h->dh_File, (uint32_t)length,
+                                      (const uint8_t *)buffer);
+    h->dh_Position = (uint32_t)h->dh_File->position;
 
     return (int32_t)written;
 }
@@ -181,8 +235,23 @@ int32_t dos_seek(BPTR handle, int32_t position, int32_t offset_type) {
 /* ------------------------------------------------------------------ */
 
 int32_t dos_flush(BPTR handle) {
-    (void)handle;
-    /* For now, no-op (write-back cache handles this) */
+    dos_handle_t *h = get_handle(handle);
+    if (!h || !h->dh_File) {
+        last_error = AOS_ERR_BAD_ARGUMENT;
+        return -AOS_ERR_BAD_ARGUMENT;
+    }
+
+    /* ATA is currently the only persistent block backend. ata_sync() first
+     * writes every dirty cache entry and then issues FLUSH CACHE, so success
+     * means both cache writeback and the device persistence barrier completed. */
+    if (ata_sync() != 0) {
+        h->dh_ErrCode = AOS_ERR_DEVICE_BUSY;
+        last_error = AOS_ERR_DEVICE_BUSY;
+        return -AOS_ERR_DEVICE_BUSY;
+    }
+
+    h->dh_ErrCode = AOS_ERR_OK;
+    last_error = AOS_ERR_OK;
     return 0;
 }
 
@@ -246,8 +315,14 @@ int32_t dos_ex_next(BPTR lock, file_info_block_t *fib) {
     }
 
     uint32_t idx = h->dh_Position;
-    vfs_dirent_t *entry = vfs_readdir(h->dh_Node, idx);
-    if (!entry) {
+    vfs_dirent_t entry;
+    int scan_rc = vfs_readdir_status(h->dh_Node, idx, &entry);
+    if (scan_rc < 0) {
+        last_error = -scan_rc;
+        h->dh_ErrCode = -scan_rc;
+        return scan_rc;
+    }
+    if (scan_rc == 0) {
         /* No more entries */
         last_error = AOS_ERR_NOT_FOUND;
         return -1;
@@ -256,15 +331,21 @@ int32_t dos_ex_next(BPTR lock, file_info_block_t *fib) {
     h->dh_Position++;
 
     /* Find the actual node for this entry */
-    vfs_node_t *child = vfs_finddir(h->dh_Node, entry->name);
-    if (child) {
+    vfs_node_t *child = NULL;
+    int lookup_rc = vfs_finddir_status(h->dh_Node, entry.name, &child);
+    if (lookup_rc < 0) {
+        last_error = -lookup_rc;
+        h->dh_ErrCode = -lookup_rc;
+        return lookup_rc;
+    }
+    if (lookup_rc > 0) {
         node_to_fib(child, fib);
     } else {
         /* Entry exists but node not found — just fill name */
         memset(fib, 0, sizeof(file_info_block_t));
         int i;
-        for (i = 0; i < DOS_FILENAMESIZE - 1 && entry->name[i]; i++)
-            fib->fib_FileName[i] = entry->name[i];
+        for (i = 0; i < DOS_FILENAMESIZE - 1 && entry.name[i]; i++)
+            fib->fib_FileName[i] = entry.name[i];
         fib->fib_FileName[i] = 0;
         fib->fib_DirEntryType = -1;
     }

@@ -7,6 +7,18 @@
 #include <serial.h>
 #include <tty.h>
 #include <panic.h>
+#include <stddef.h>
+#include <gdt.h>
+#include <dos/dos.h>
+#include <msgport.h>
+#include <bsdsocket.h>
+
+/* task_switch.asm usa offsets hardcoded da task_struct_t. Se a struct mudar,
+ * o build quebra aqui em vez de trocar de stack para lixo em runtime
+ * (foi exatamente isso que gerou RSP=0 + Double Fault: TASK_RSP valia 96,
+ * que é o offset de rbp, enquanto rsp está em 88). */
+_Static_assert(offsetof(task_struct_t, rsp) == 88,
+               "TASK_RSP em kernel/task_switch.asm fora de sincronia com task_struct_t.rsp");
 
 #define kheap_alloc(size) kmalloc(size)
 #define kheap_free(ptr) kfree(ptr)
@@ -137,6 +149,7 @@ void task_init(void) {
     init_task->counter = 10;
     init_task->errno_val = 0;
     init_task->tty = console_tty;
+    init_task->socket_base = NULL;
     init_task->name[0] = 'I'; init_task->name[1] = 'n'; init_task->name[2] = 'i';
     init_task->name[3] = 't'; init_task->name[4] = 0;
 
@@ -244,6 +257,7 @@ task_struct_t *task_create(void (*entry)(void), uint64_t flags __attribute__((un
     task->counter = 10;
     task->errno_val = 0;
     task->tty = console_tty;
+    task->socket_base = NULL;
     task->name[0] = 0;
 
     unsigned long irq_flags;
@@ -266,6 +280,17 @@ void task_exit(int code) {
         PANIC("task_exit called without a current task");
         __builtin_unreachable();
     }
+
+    /* P0 lifecycle: release per-task resources before descheduling.
+     * Runs without runqueue lock (VFS/IPC take their own locks).
+     * Sockets already had bsdsocket_task_exit() but no caller;
+     * DOS handles and MsgPorts are now owner-tagged (pid) and purged here. */
+    if (current->socket_base) {
+        bsdsocket_task_exit(current->socket_base);
+        current->socket_base = NULL;
+    }
+    dos_task_cleanup(current);
+    msgport_task_cleanup(current);
 
     unsigned long flags;
     RUNQUEUE_LOCK(flags);
@@ -294,6 +319,11 @@ void task_exit(int code) {
     }
 
     RUNQUEUE_UNLOCK(flags);
+    /* schedule() → context_switch() não toca RFLAGS: sem este sti, um
+     * task_exit vindo de trap com IF=0 (syscall_entry dá cli; exceções
+     * entram com IF=0) calaria o PIT para sempre — ticks congelados, hang
+     * mudo. task_exit nunca retorna, então reabilitar aqui é seguro. */
+    __asm__ volatile("sti" ::: "memory");
     schedule();
 
     /* A suspended task is never eligible to run again. Reaching this point
@@ -367,6 +397,12 @@ void schedule(void) {
     task_struct_t *prev = current;
     current = next;
     current->counter = current->priority;
+
+    /* TSS RSP0 must follow every switch: traps/IRQs from Ring 3 land on
+     * this stack (CPU loads it on privilege change). A stale RSP0 would
+     * route a user trap into another task's (or freed) stack. Cheap
+     * memory write, no MSR involved. */
+    tss_set_kernel_stack(current->kernel_stack);
 
     /* Activate the incoming address space before switching stacks. This is
      * required for newly-created tasks because their first context switch

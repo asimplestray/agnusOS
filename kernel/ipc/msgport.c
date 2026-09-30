@@ -34,6 +34,7 @@ typedef struct msg_port {
     kmsg_t *tail;
     wait_queue_head_t wait;
     spinlock_t lock;
+    uint64_t owner;   /* pid of creating task (0 = kernel/no-task) */
 } msg_port_t;
 
 typedef struct kreply {
@@ -68,6 +69,7 @@ int64_t msgport_create(const char *name)
     port->tail = NULL;
     init_waitqueue_head(&port->wait);
     spinlock_init(&port->lock);
+    port->owner = current ? current->pid : 0;
 
     if (name) {
         int i = 0;
@@ -128,6 +130,32 @@ int64_t msgport_delete(int32_t id)
     spin_unlock_irqrestore(&registry_lock, flags);
     kfree(port);
     return 0;
+}
+
+/* Delete every port owned by @t. Called once from task_exit().
+ * Loops one port at a time (find under lock, delete without holding it)
+ * so we never hold registry_lock across wake_up/kfree. Pending replies
+ * targeting a deleted port are purged by msgport_delete(). */
+void msgport_task_cleanup(struct task_struct *t)
+{
+    if (!t)
+        return;
+    uint64_t pid = t->pid;
+    for (;;) {
+        int32_t victim = 0;
+        unsigned long flags;
+        spin_lock_irqsave(&registry_lock, &flags);
+        for (msg_port_t *p = port_list; p; p = p->next) {
+            if (p->owner == pid) {
+                victim = p->id;
+                break;
+            }
+        }
+        spin_unlock_irqrestore(&registry_lock, flags);
+        if (!victim)
+            break;
+        msgport_delete(victim);
+    }
 }
 
 int64_t msgport_put(int32_t id, const msg_t *msg)
