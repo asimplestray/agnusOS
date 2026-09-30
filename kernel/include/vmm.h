@@ -73,4 +73,8 @@ struct interrupt_frame;
 // Page fault handler - registered as the C handler for exception vector 14
 void vmm_page_fault_handler(struct interrupt_frame *frame);
 
+/* Boot-time isolation audit: walks the kernel PML4 counting PRESENT
+ * entries/leaves with the USER bit (expect zero). Diagnostic only. */
+void vmm_audit_isolation(void);
+
 #endif

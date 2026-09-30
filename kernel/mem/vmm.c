@@ -1,6 +1,7 @@
 #include <vmm.h>
 #include <pmm.h>
 #include <screen.h>
+#include <serial.h>
 #include <task.h>
 #include <kheap.h>
 
@@ -24,11 +25,141 @@ uint64_t vmm_active_pml4(void) {
     return read_cr3();
 }
 
+/* Large-page helpers: o mapeador abaixo só entende páginas 4K, mas o boot
+ * instala identity mapping com páginas grandes (2 MiB). Sem isto, descer
+ * numa entrada PS trata memória de página como memória de tabela:
+ * corrompe o conteúdo e retorna sucesso bogus (foi exatamente o que
+ * quebrou o primeiro spawn Ring 3 em 0x400000: #PF U/S no iret). */
+#define VMM_FLAG_PS        (1ULL << 7)
+#define VMM_ADDR_MASK      0x000FFFFFFFFFF000ULL
+#define VMM_FLAG_KEEP_SPLIT (VMM_FLAG_PRESENT | VMM_FLAG_WRITE | \
+                             VMM_FLAG_USER | VMM_FLAG_PWT | VMM_FLAG_PCD | \
+                             VMM_FLAG_NX | (1ULL << 8)) /* +G: transparente */
+
 void vmm_init(void) {
     // Read the active PML4 physical address from CR3 (identity mapped during boot)
     kernel_pml4_phys = read_cr3();
     active_pml4 = (uint64_t*)kernel_pml4_phys;
     screen_log(" OK ", COLOR_LIGHT_GREEN, "Virtual Memory Manager (VMM) initialized successfully.");
+}
+
+/* Auditoria de isolamento do PML4 do kernel (P0 §3, diagnóstico de boot).
+ * Percorre as tabelas a partir do PML4 ativo e conta entradas PRESENT com
+ * bit USER. Invariante: o address space do próprio kernel não tem nenhuma
+ * (half alto supervisor-only; half baixo do kernel sem mappings de user).
+ * Páginas grandes (PS em PDPT/PD) contam como folhas. Só reporta via
+ * serial/tela — sem PANIC: é gate de diagnóstico enquanto o §3 não fecha
+ * (PML4s de usuário ainda forçam USER nos ancestrais compartilhados da
+ * entry 0; wart documentado em vmm_map_page_in_pml4). */
+void vmm_audit_isolation(void) {
+    if (!kernel_pml4_phys) {
+        serial_print("[VMM-AUDIT] SKIP: sem PML4 do kernel\n");
+        return;
+    }
+    uint64_t user_entries = 0, user_leaves = 0, present_top = 0;
+    uint64_t *pml4 = (uint64_t *)kernel_pml4_phys;
+    for (int i = 0; i < 512; i++) {
+        uint64_t e = pml4[i];
+        if (!(e & VMM_FLAG_PRESENT))
+            continue;
+        present_top++;
+        if (e & VMM_FLAG_USER)
+            user_entries++;
+        uint64_t *pdpt = (uint64_t *)(e & VMM_ADDR_MASK);
+        for (int j = 0; j < 512; j++) {
+            uint64_t e1 = pdpt[j];
+            if (!(e1 & VMM_FLAG_PRESENT))
+                continue;
+            if (e1 & VMM_FLAG_USER)
+                user_entries++;
+            if (e1 & VMM_FLAG_PS) {
+                if (e1 & VMM_FLAG_USER)
+                    user_leaves++;
+                continue;
+            }
+            uint64_t *pd = (uint64_t *)(e1 & VMM_ADDR_MASK);
+            for (int k = 0; k < 512; k++) {
+                uint64_t e2 = pd[k];
+                if (!(e2 & VMM_FLAG_PRESENT))
+                    continue;
+                if (e2 & VMM_FLAG_USER)
+                    user_entries++;
+                if (e2 & VMM_FLAG_PS) {
+                    if (e2 & VMM_FLAG_USER)
+                        user_leaves++;
+                    continue;
+                }
+                uint64_t *pt = (uint64_t *)(e2 & VMM_ADDR_MASK);
+                for (int l = 0; l < 512; l++) {
+                    if ((pt[l] & VMM_FLAG_PRESENT) && (pt[l] & VMM_FLAG_USER))
+                        user_leaves++;
+                }
+            }
+        }
+    }
+
+    /* Readback das proteções de CPU ligadas por cpu_harden(). */
+    uint64_t cr0, cr4;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+
+    char nbuf[24];
+    serial_print("[VMM-AUDIT] top-present=");
+    itoa((int64_t)present_top, nbuf, 10);
+    serial_print(nbuf);
+    serial_print(" user-entries=");
+    itoa((int64_t)user_entries, nbuf, 10);
+    serial_print(nbuf);
+    serial_print(" user-leaves=");
+    itoa((int64_t)user_leaves, nbuf, 10);
+    serial_print(nbuf);
+    serial_print((cr0 & (1ULL << 16)) ? " WP=1" : " WP=0");
+    serial_print((cr4 & (1ULL << 20)) ? " SMEP=1\n" : " SMEP=0\n");
+
+    if (user_entries == 0 && user_leaves == 0)
+        screen_log("OK", COLOR_LIGHT_GREEN, "VMM-AUDIT PASS (kernel PML4 sem USER).");
+    else
+        screen_log("FAIL", COLOR_LIGHT_RED, "VMM-AUDIT falhou (USER no PML4 do kernel).");
+}
+
+/* Divide uma entrada PDPT 1 GiB em uma PD de 512×2 MiB. Retorna false em OOM. */
+static bool split_pdpt_entry(uint64_t *pdpt, uint64_t idx) {
+    uint64_t e = pdpt[idx];
+    if (!(e & VMM_FLAG_PRESENT) || !(e & VMM_FLAG_PS))
+        return true;  /* nada a fazer */
+    uint64_t new_pd_phys = pmm_alloc_block();
+    if (!new_pd_phys) return false;
+    uint64_t *new_pd = (uint64_t *)new_pd_phys;
+    uint64_t base = e & 0xFFFFFC0000000ULL; /* bits 30+ */
+    uint64_t keep = e & VMM_FLAG_KEEP_SPLIT;
+    for (int i = 0; i < 512; i++)
+        new_pd[i] = (base + (uint64_t)i * 0x200000ULL) | VMM_FLAG_PS | keep;
+    /* Ponteiro de tabela: U forçado — a CPU exige U/S=1 em TODOS os níveis
+     * para acesso Ring 3 (a página grande original do kernel é supervisor).
+     * NX preservado do original. Sem isto, o iret para Ring 3 falha com
+     * #PF U/S mesmo com a PTE final P|U. */
+    pdpt[idx] = new_pd_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
+                VMM_FLAG_USER | (keep & VMM_FLAG_NX);
+    return true;
+}
+
+/* Divide uma entrada PD 2 MiB em uma PT de 512×4 KiB. Retorna false em OOM. */
+static bool split_pd_entry(uint64_t *pd, uint64_t idx) {
+    uint64_t e = pd[idx];
+    if (!(e & VMM_FLAG_PRESENT) || !(e & VMM_FLAG_PS))
+        return true;  /* nada a fazer */
+    uint64_t new_pt_phys = pmm_alloc_block();
+    if (!new_pt_phys) return false;
+    uint64_t *new_pt = (uint64_t *)new_pt_phys;
+    uint64_t base = e & 0xFFFFFFFFFFE00000ULL; /* bits 21+ */
+    uint64_t keep = e & VMM_FLAG_KEEP_SPLIT;
+    keep &= ~VMM_FLAG_PS;
+    for (int i = 0; i < 512; i++)
+        new_pt[i] = (base + (uint64_t)i * 0x1000ULL) | keep;
+    /* Ponteiro de tabela: U forçado (ver split_pdpt_entry). */
+    pd[idx] = new_pt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
+              VMM_FLAG_USER | (keep & VMM_FLAG_NX);
+    return true;
 }
 
 uint64_t vmm_create_pml4(void) {
@@ -77,7 +208,7 @@ bool vmm_map_page_in_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint
     if (!(pml4_entry & VMM_FLAG_PRESENT)) {
         uint64_t new_table_phys = pmm_alloc_block();
         if (!new_table_phys) return false;
-        
+
         uint64_t* new_table = (uint64_t*)new_table_phys;
         for (int i = 0; i < 512; i++) {
             new_table[i] = 0;
@@ -88,7 +219,14 @@ bool vmm_map_page_in_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint
         pml4[pml4_idx] = new_table_phys | table_flags;
         pdpt = new_table;
     } else {
-        pdpt = (uint64_t*)(pml4_entry & ~0xFFF);
+        /* Caminho USER por tabelas compartilhadas (entry 0 herdada do kernel):
+         * a CPU exige U/S=1 em TODOS os níveis da caminhada. Marca o ancestral.
+         * Tradeoff M1 documentado: isto expõe as páginas supervisoras irmãs ao
+         * Ring 3 no MMU; a invariante de segurança segue no access_ok(), que
+         * exige a FOLHA P|U (isolamento real é o épico §3). */
+        if ((flags & VMM_FLAG_USER) && !(pml4[pml4_idx] & VMM_FLAG_USER))
+            pml4[pml4_idx] |= VMM_FLAG_USER;
+        pdpt = (uint64_t*)(pml4[pml4_idx] & VMM_ADDR_MASK);
     }
 
     uint64_t pdpt_entry = pdpt[pdpt_idx];
@@ -107,7 +245,13 @@ bool vmm_map_page_in_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint
         pdpt[pdpt_idx] = new_table_phys | table_flags;
         pd = new_table;
     } else {
-        pd = (uint64_t*)(pdpt_entry & ~0xFFF);
+        /* Entrada grande (1 GiB)? Divide antes de descer — ver split_*. */
+        if ((pdpt_entry & VMM_FLAG_PS) &&
+            !split_pdpt_entry(pdpt, pdpt_idx))
+            return false;
+        if ((flags & VMM_FLAG_USER) && !(pdpt[pdpt_idx] & VMM_FLAG_USER))
+            pdpt[pdpt_idx] |= VMM_FLAG_USER;
+        pd = (uint64_t*)(pdpt[pdpt_idx] & VMM_ADDR_MASK);
     }
 
     uint64_t pd_entry = pd[pd_idx];
@@ -126,7 +270,13 @@ bool vmm_map_page_in_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint
         pd[pd_idx] = new_table_phys | table_flags;
         pt = new_table;
     } else {
-        pt = (uint64_t*)(pd_entry & ~0xFFF);
+        /* Entrada grande (2 MiB)? Divide antes de descer — ver split_*. */
+        if ((pd_entry & VMM_FLAG_PS) &&
+            !split_pd_entry(pd, pd_idx))
+            return false;
+        if ((flags & VMM_FLAG_USER) && !(pd[pd_idx] & VMM_FLAG_USER))
+            pd[pd_idx] |= VMM_FLAG_USER;
+        pt = (uint64_t*)(pd[pd_idx] & VMM_ADDR_MASK);
     }
 
     uint64_t pte_flags = flags;
@@ -174,15 +324,20 @@ void vmm_unmap_page_in_pml4(uint64_t pml4_phys, uint64_t virt) {
     uint64_t pml4_entry = pml4[pml4_idx];
     if (!(pml4_entry & VMM_FLAG_PRESENT)) return;
 
-    uint64_t* pdpt = (uint64_t*)(pml4_entry & ~0xFFF);
+    uint64_t* pdpt = (uint64_t*)(pml4_entry & VMM_ADDR_MASK);
     uint64_t pdpt_entry = pdpt[pdpt_idx];
     if (!(pdpt_entry & VMM_FLAG_PRESENT)) return;
+    /* Página grande? Divide primeiro (simetria com o map); OOM = no-op. */
+    if ((pdpt_entry & VMM_FLAG_PS) && !split_pdpt_entry(pdpt, pdpt_idx))
+        return;
 
-    uint64_t* pd = (uint64_t*)(pdpt_entry & ~0xFFF);
+    uint64_t* pd = (uint64_t*)(pdpt[pdpt_idx] & VMM_ADDR_MASK);
     uint64_t pd_entry = pd[pd_idx];
     if (!(pd_entry & VMM_FLAG_PRESENT)) return;
+    if ((pd_entry & VMM_FLAG_PS) && !split_pd_entry(pd, pd_idx))
+        return;
 
-    uint64_t* pt = (uint64_t*)(pd_entry & ~0xFFF);
+    uint64_t* pt = (uint64_t*)(pd[pd_idx] & VMM_ADDR_MASK);
     pt[pt_idx] = 0; // Clear the entry
 
     uint64_t active_pml4_phys = read_cr3();
@@ -201,16 +356,18 @@ void vmm_free_pml4(uint64_t pml4_phys) {
      * also shared, also skipped. */
     for (int i = 1; i < 256; i++) { // user space only, minus shared entry 0
         if (pml4[i] & VMM_FLAG_PRESENT) {
-            uint64_t *pdpt = (uint64_t *)(pml4[i] & ~0xFFF);
+            uint64_t *pdpt = (uint64_t *)(pml4[i] & VMM_ADDR_MASK);
             for (int j = 0; j < 512; j++) {
                 if (pdpt[j] & VMM_FLAG_PRESENT) {
-                    uint64_t *pd = (uint64_t *)(pdpt[j] & ~0xFFF);
+                    uint64_t *pd = (uint64_t *)(pdpt[j] & VMM_ADDR_MASK);
                     for (int k = 0; k < 512; k++) {
                         if (pd[k] & VMM_FLAG_PRESENT) {
-                            uint64_t *pt = (uint64_t *)(pd[k] & ~0xFFF);
+                            uint64_t *pt = (uint64_t *)(pd[k] & VMM_ADDR_MASK);
                             for (int l = 0; l < 512; l++) {
                                 if (pt[l] & VMM_FLAG_PRESENT) {
-                                    uint64_t phys_page = pt[l] & ~0xFFF;
+                                    /* Máscara limpa: páginas NX (bit 63) não
+                                     * podem vazar para o endereço físico. */
+                                    uint64_t phys_page = pt[l] & VMM_ADDR_MASK;
                                     pmm_free_block(phys_page);
                                 }
                             }
@@ -247,16 +404,21 @@ uint64_t vmm_get_phys(uint64_t pml4_phys, uint64_t virt)
     uint64_t *pml4 = (uint64_t *)pml4_phys;
     if (!(pml4[pml4_idx] & VMM_FLAG_PRESENT)) return 0;
 
-    uint64_t* pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
+    uint64_t* pdpt = (uint64_t*)(pml4[pml4_idx] & VMM_ADDR_MASK);
     if (!(pdpt[pdpt_idx] & VMM_FLAG_PRESENT)) return 0;
+    if (pdpt[pdpt_idx] & VMM_FLAG_PS)
+        return (pdpt[pdpt_idx] & 0xFFFFFC0000000ULL) +
+               (virt & 0x3FFFFFFFULL);
 
-    uint64_t* pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
+    uint64_t* pd = (uint64_t*)(pdpt[pdpt_idx] & VMM_ADDR_MASK);
     if (!(pd[pd_idx] & VMM_FLAG_PRESENT)) return 0;
+    if (pd[pd_idx] & VMM_FLAG_PS)
+        return (pd[pd_idx] & 0xFFFFFFFFFFE00000ULL) + (virt & 0x1FFFFFULL);
 
-    uint64_t* pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
+    uint64_t* pt = (uint64_t*)(pd[pd_idx] & VMM_ADDR_MASK);
     if (!(pt[pt_idx] & VMM_FLAG_PRESENT)) return 0;
 
-    return pt[pt_idx] & ~0xFFF;
+    return pt[pt_idx] & VMM_ADDR_MASK;
 }
 
 uint64_t vmm_get_page_flags(uint64_t pml4_phys, uint64_t virt)
@@ -272,13 +434,17 @@ uint64_t vmm_get_page_flags(uint64_t pml4_phys, uint64_t virt)
 
     if (!pml4 || !(pml4[pml4_idx] & VMM_FLAG_PRESENT))
         return 0;
-    pdpt = (uint64_t *)(pml4[pml4_idx] & ~0xFFFULL);
+    pdpt = (uint64_t *)(pml4[pml4_idx] & VMM_ADDR_MASK);
     if (!(pdpt[pdpt_idx] & VMM_FLAG_PRESENT))
         return 0;
-    pd = (uint64_t *)(pdpt[pdpt_idx] & ~0xFFFULL);
+    if (pdpt[pdpt_idx] & VMM_FLAG_PS)
+        return pdpt[pdpt_idx];  /* mapeamento 1 GiB: a própria entrada */
+    pd = (uint64_t *)(pdpt[pdpt_idx] & VMM_ADDR_MASK);
     if (!(pd[pd_idx] & VMM_FLAG_PRESENT))
         return 0;
-    pt = (uint64_t *)(pd[pd_idx] & ~0xFFFULL);
+    if (pd[pd_idx] & VMM_FLAG_PS)
+        return pd[pd_idx];  /* mapeamento 2 MiB: a própria entrada */
+    pt = (uint64_t *)(pd[pd_idx] & VMM_ADDR_MASK);
     return pt[pt_idx];
 }
 

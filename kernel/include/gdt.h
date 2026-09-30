@@ -50,6 +50,22 @@ void gdt_init(void);
 
 /* Update RSP0 in the TSS — call before every iretq to userspace */
 void tss_set_kernel_stack(uint64_t rsp0);
+/* Garante EFER.NXE=1 (cobre boot que pula o boot.asm, ex. Limine direto
+ * em 64 bits). Sem NXE, o bit NX que o kernel usa em páginas USER é
+ * reservado e gera #PF(RSVD). Idempotente; PANIC se a CPU não tem NX. */
+void cpu_enable_nxe(void);
+
+/* Endurece a execução Ring 0 (P0 §3, passo 1 — sem mudar layout):
+ * - CR0.WP=1: supervisor passa a respeitar páginas read-only (hoje todas
+ *   as páginas do kernel ainda são RW, então é no-op comportamental e
+ *   guardrail para o futuro texto read-only).
+ * - CR4.SMEP=1 (se cpuid.7:EBX[7]): Ring 0 nunca executa página USER
+ *   (iret para Ring 3 não é afetado). O kernel nunca executa memória
+ *   de usuário em modo supervisor, então é seguro ligar.
+ * - SMAP é só detectado e reportado: ligar sem auditoria completa dos
+ *   caminhos internos (além da borda uaccess) arrisca #PF no boot.
+ * Idempotente; só liga bits, nunca desliga. */
+void cpu_harden(void);
 
 /* Assembly helpers (defined in gdt.asm) */
 extern void gdt_flush(uint64_t gdt_ptr);

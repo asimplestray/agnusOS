@@ -15,7 +15,7 @@
 #include <procfs.h>
 #include <devfs.h>
 #include <firmware.h>
-#include <apollo_drv.h>
+#include <agnus_drv.h>
 #include <serial.h>
 #include <polaris.h>
 #include <bsdsocket.h>
@@ -33,7 +33,6 @@
 #include <drm/drm_atomic.h>
 #include <compat/compat_check.h>
 #include <framebuffer.h>
-#include <amdgpu.h>
 #include <assign.h>
 #include <msgport.h>
 #include <dogin.h>
@@ -48,6 +47,8 @@ void kernel_main(void) {
     serial_init();
     log_init();
     serial_print("AgnusOS: Starting kernel...\n");
+    cpu_enable_nxe();
+    cpu_harden();
 
     if (multiboot_magic == MULTIBOOT2_MAGIC) {
         fb_init(multiboot_info);
@@ -83,6 +84,7 @@ void kernel_main(void) {
         vmm_init();
         serial_print("AgnusOS: vmm_init done\n");
         screen_log("OK", COLOR_LIGHT_GREEN, "VMM inicializado.");
+        vmm_audit_isolation();
 
         kheap_init();
         serial_print("AgnusOS: kheap_init done\n");
@@ -171,10 +173,8 @@ void kernel_main(void) {
         assign_test();
         msgport_test();
 
-        /* Probe legado do polaris.c REMOVIDO: fazia sizing de BAR via
-         * config space (quebra o mapeamento KVM) e foi substituído pela
-         * cadeia amdgpu v0.1.0 MINIMAL (Fase 3), que roda após os
-         * selftests da Fase 2. */
+        /* A infraestrutura genérica de GPU/DRM permanece ativa. O antigo
+         * stub AMDGPU foi arquivado fora do build principal. */
     } else {
         screen_log("FALHA", COLOR_LIGHT_RED, "Multiboot2 invalido.");
     }
@@ -253,12 +253,12 @@ void kernel_main(void) {
     drm_sched_test();
     drm_atomic_test();
 
-    /* Fase 3: amdgpu v0.1.0 MINIMAL (só ativa se houver ASIC suportada) */
-    screen_print("\n========================================================\n");
-    screen_print("   INICIALIZANDO SUBSISTEMA DE VIDEO AMD (AMDGPU)\n");
-    screen_print("========================================================\n");
-    amdgpu_init();
-    screen_print("========================================================\n\n");
+    /* Pipe chunked-write selftest (precisa do timer rodando: reader/writer
+     * bloqueiam em waitqueues com timeout). */
+    pipe_test();
+
+    /* Primeira task Ring 3 da história do kernel (timer + assigns prontos). */
+    ring3_selftest();
 
     screen_print("\n>> AgnusOS pronto. Iniciando dogin shell...\n");
 
@@ -274,7 +274,6 @@ void kernel_main(void) {
     }
     while (1) {
         extern volatile uint64_t need_resched;
-        amdgpu_idle_tick();
         if (need_resched) {
             need_resched = 0;
             schedule();

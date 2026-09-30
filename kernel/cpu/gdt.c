@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kheap.h>
+#include <serial.h>
+#include <panic.h>
 
 /* TSS instance */
 tss64_t kernel_tss;
@@ -138,3 +140,59 @@ void tss_set_kernel_stack(uint64_t rsp0)
 {
     kernel_tss.rsp0 = rsp0;
 }
+
+static inline uint64_t rdmsr_c(uint32_t msr) {
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+static inline void wrmsr_c(uint32_t msr, uint64_t v) {
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)v),
+                     "d"((uint32_t)(v >> 32)));
+}
+
+void cpu_enable_nxe(void) {
+    uint32_t a, b, c, d;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(0x80000001U));
+    if (!(d & (1U << 20)))
+        PANIC("CPU without NX support (EFER.NXE obrigatorio)");
+    uint64_t efer = rdmsr_c(0xC0000080U);
+    if (!(efer & (1ULL << 11))) {
+        wrmsr_c(0xC0000080U, efer | (1ULL << 11));
+        serial_print("CPU: EFER.NXE habilitado\n");
+    }
+}
+
+void cpu_harden(void) {
+    uint64_t cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    if (!(cr0 & (1ULL << 16))) {
+        __asm__ volatile("mov %0, %%cr0" : : "r"(cr0 | (1ULL << 16)) : "memory");
+        serial_print("CPU: CR0.WP ligado (supervisor respeita RO)\n");
+    }
+
+    uint32_t a, b, c, d;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                     : "a"(7U), "c"(0U));
+    if (b & (1U << 7)) {
+        uint64_t cr4;
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        if (!(cr4 & (1ULL << 20))) {
+            __asm__ volatile("mov %0, %%cr4" : : "r"(cr4 | (1ULL << 20)) : "memory");
+            serial_print("CPU: CR4.SMEP ligado (Ring0 nao executa USER)\n");
+        }
+    } else {
+        serial_print("CPU: SMEP indisponivel\n");
+    }
+    if (b & (1U << 20))
+        serial_print("CPU: SMAP presente, desligado (falta auditoria interna — P0§3)\n");
+    else
+        serial_print("CPU: SMAP indisponivel\n");
+}
+
+/* jump_to_usermode (gdt.asm) lê task_struct_t.kernel_stack via offset
+ * hardcoded. Trava o build se a struct mudar (mesmo padrão do TASK_RSP). */
+#include <task.h>
+_Static_assert(offsetof(task_struct_t, kernel_stack) == 64,
+               "gdt.asm usa [rax+64] para task_struct_t.kernel_stack");
