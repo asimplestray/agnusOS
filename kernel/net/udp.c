@@ -28,6 +28,11 @@ struct udp_sock *udp_socket(int domain, int type, int protocol) {
             spinlock_init(&udp_socks[i].lock.lock);
             init_waitqueue_head(&udp_socks[i].wait);
             udp_socks[i].bound = 1;
+            udp_socks[i].closed = 0;
+            udp_socks[i].rx_queue = NULL;
+            udp_socks[i].rx_tail = NULL;
+            udp_socks[i].rx_count = 0;
+            udp_socks[i].rx_drops = 0;
             spin_unlock_irqrestore(&udp_lock, flags);
             return &udp_socks[i];
         }
@@ -115,92 +120,138 @@ int udp_sendto(struct udp_sock *sock, const void *data, uint32_t len, const uint
 }
 
 int udp_recvfrom(struct udp_sock *sock, void *buf, uint32_t len, uint8_t *src_ip, uint16_t *src_port) {
-    if (!sock) return -1;
-    
-    unsigned long flags;
-    spin_lock_irqsave(&sock->lock, &flags);
-    
-    if (!sock->rx_queue) {
-        spin_unlock_irqrestore(&sock->lock, flags);
-        
-        wait_event(sock->wait, sock->rx_queue != NULL);
-        
+    if (!sock || !buf || len == 0) return -1;
+
+    for (;;) {
+        unsigned long flags;
         spin_lock_irqsave(&sock->lock, &flags);
-    }
-    
-    struct net_pkt *pkt = sock->rx_queue;
-    if (!pkt) {
+        if (sock->closed) {
+            spin_unlock_irqrestore(&sock->lock, flags);
+            return -1;
+        }
+        if (sock->rx_queue) {
+            struct net_pkt *pkt = sock->rx_queue;
+            sock->rx_queue = pkt->next;
+            if (!sock->rx_queue)
+                sock->rx_tail = NULL;
+            if (pkt->next)
+                pkt->next = NULL;
+            sock->rx_count--;
+            spin_unlock_irqrestore(&sock->lock, flags);
+
+            /* Validate before touching payload: corrupt length fields
+             * arrive from the wire and must not cause underflow/OOB. */
+            struct ip_hdr *iph = (struct ip_hdr *)pkt->data;
+            uint8_t ihl = (iph->ver_ihl & 0x0F) * 4;
+            if (ihl < 20 || pkt->len < (uint32_t)(ihl + sizeof(struct udp_hdr))) {
+                pkt_free(pkt);
+                return -1;
+            }
+            struct udp_hdr *uh = (struct udp_hdr *)((uint8_t *)iph + ihl);
+            uint32_t udp_len = ntohs(uh->len);
+            if (udp_len < sizeof(struct udp_hdr) ||
+                udp_len > pkt->len - ihl) {
+                pkt_free(pkt);
+                return -1;
+            }
+            uint32_t payload_len = udp_len - sizeof(struct udp_hdr);
+            void *payload = (uint8_t *)uh + sizeof(struct udp_hdr);
+
+            uint32_t copy_len = len < payload_len ? len : payload_len;
+            memcpy(buf, payload, copy_len);
+
+            if (src_ip) memcpy(src_ip, iph->saddr, 4);
+            if (src_port) *src_port = ntohs(uh->src_port);
+
+            int ret = (int)copy_len;
+            pkt_free(pkt);
+            return ret;
+        }
         spin_unlock_irqrestore(&sock->lock, flags);
-        return 0;
+
+        /* Sleep until data or close. Close sets closed + wake_up, so a
+         * receiver blocked here always wakes with -1 instead of hanging
+         * on a freed/reused slot. */
+        wait_event(sock->wait, sock->rx_queue != NULL || sock->closed);
     }
-    
-    sock->rx_queue = pkt->next;
-    spin_unlock_irqrestore(&sock->lock, flags);
-    
-    struct ip_hdr *iph = (struct ip_hdr *)pkt->data;
-    uint8_t ihl = (iph->ver_ihl & 0x0F) * 4;
-    struct udp_hdr *uh = (struct udp_hdr *)((uint8_t *)iph + ihl);
-    void *payload = (uint8_t *)uh + sizeof(struct udp_hdr);
-    uint32_t payload_len = ntohs(uh->len) - sizeof(struct udp_hdr);
-    
-    uint32_t copy_len = len < payload_len ? len : payload_len;
-    memcpy(buf, payload, copy_len);
-    
-    if (src_ip) memcpy(src_ip, iph->saddr, 4);
-    if (src_port) *src_port = ntohs(uh->src_port);
-    
-    int ret = copy_len;
-    pkt_free(pkt);
-    
-    return ret;
 }
 
 void udp_close(struct udp_sock *sock) {
     if (!sock) return;
-    
+
     unsigned long flags;
     spin_lock_irqsave(&sock->lock, &flags);
-    
+    sock->closed = 1;
     while (sock->rx_queue) {
         struct net_pkt *pkt = sock->rx_queue;
         sock->rx_queue = pkt->next;
         pkt_free(pkt);
     }
-    
+    sock->rx_tail = NULL;
+    sock->rx_count = 0;
     sock->bound = 0;
+    wake_up(&sock->wait);
     spin_unlock_irqrestore(&sock->lock, flags);
 }
 
 void udp_input(struct netif *dev, struct net_pkt *pkt) {
+    (void)dev;
     struct ip_hdr *iph = (struct ip_hdr *)pkt->data;
     uint8_t ihl = (iph->ver_ihl & 0x0F) * 4;
-    struct udp_hdr *uh = (struct udp_hdr *)((uint8_t *)iph + ihl);
-    
-    if (pkt->len < ihl + sizeof(struct udp_hdr)) {
+    /* Length fields come from the wire: validate before dereferencing. */
+    if (ihl < 20 || pkt->len < (uint32_t)(ihl + sizeof(struct udp_hdr))) {
         pkt_free(pkt);
         return;
     }
-    
+    struct udp_hdr *uh = (struct udp_hdr *)((uint8_t *)iph + ihl);
+    uint32_t udp_len = ntohs(uh->len);
+    if (udp_len < sizeof(struct udp_hdr) ||
+        udp_len > pkt->len - ihl) {
+        pkt_free(pkt);
+        return;
+    }
+    /* RX checksum is not validated (TX helper sums in host order; proper
+     * network-order validation is future work). Lengths above are the
+     * memory-safety boundary. */
+
     uint16_t dst_port = ntohs(uh->dst_port);
-    
-    unsigned long flags;
-    spin_lock_irqsave(&udp_lock, &flags);
-    
+
+    unsigned long outer_flags;
+    spin_lock_irqsave(&udp_lock, &outer_flags);
+
     for (int i = 0; i < MAX_UDP_SOCKS; i++) {
-        if (udp_socks[i].bound && udp_socks[i].sport == dst_port) {
+        if (udp_socks[i].bound && !udp_socks[i].closed &&
+            udp_socks[i].sport == dst_port) {
             struct udp_sock *sock = &udp_socks[i];
-            
-            spin_lock_irqsave(&sock->lock, &flags);
-            pkt->next = sock->rx_queue;
-            sock->rx_queue = pkt;
+
+            /* Nested locks need separate saved states: sharing one
+             * flags variable corrupts the outer IRQ restore. */
+            unsigned long inner_flags;
+            spin_lock_irqsave(&sock->lock, &inner_flags);
+            if (sock->closed || sock->rx_count >= UDP_MAX_RX_QUEUE) {
+                if (!sock->closed)
+                    sock->rx_drops++;
+                spin_unlock_irqrestore(&sock->lock, inner_flags);
+                spin_unlock_irqrestore(&udp_lock, outer_flags);
+                pkt_free(pkt);
+                return;
+            }
+            /* FIFO tail-append (was head-insert = LIFO). */
+            pkt->next = NULL;
+            if (sock->rx_tail)
+                sock->rx_tail->next = pkt;
+            else
+                sock->rx_queue = pkt;
+            sock->rx_tail = pkt;
+            sock->rx_count++;
             wake_up(&sock->wait);
-            spin_unlock_irqrestore(&sock->lock, flags);
-            
-            spin_unlock_irqrestore(&udp_lock, flags);
+            spin_unlock_irqrestore(&sock->lock, inner_flags);
+
+            spin_unlock_irqrestore(&udp_lock, outer_flags);
             return;
         }
     }
-    
-    spin_unlock_irqrestore(&udp_lock, flags);
+
+    spin_unlock_irqrestore(&udp_lock, outer_flags);
     pkt_free(pkt);
 }

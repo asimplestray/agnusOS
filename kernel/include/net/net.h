@@ -178,10 +178,18 @@ struct udp_sock {
     uint8_t  dst_ip[4];
     uint8_t  bound;
     struct netif *dev;
-    
+
     spinlock_irq_t lock;
-    struct net_pkt *rx_queue;
+    struct net_pkt *rx_queue;   /* head (FIFO) */
+    struct net_pkt *rx_tail;    /* tail for O(1) append */
+    uint32_t rx_count;          /* queued datagrams */
+    uint32_t rx_drops;          /* dropped on full/invalid since creation */
+    uint8_t  closed;            /* set by udp_close; wakes blocked recv */
     wait_queue_head_t wait;
 };
+
+/* Bound per-socket RX queue: each datagram pins a kernel packet (~2 KiB).
+ * 64 caps one socket at ~128 KiB; excess is dropped (rx_drops++). */
+#define UDP_MAX_RX_QUEUE 64
 
 #endif

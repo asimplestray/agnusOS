@@ -69,11 +69,13 @@ void ip_input(struct netif *dev, struct net_pkt *pkt) {
     }
     
     uint8_t ihl = (iph->ver_ihl & 0x0F) * 4;
-    if (pkt->len < ihl) {
+    /* IHL counts 32-bit words; valid headers are 20..60 bytes. Anything
+     * smaller would make payload arithmetic underflow below. */
+    if (ihl < 20 || ihl > 60 || pkt->len < ihl) {
         pkt_free(pkt);
         return;
     }
-    
+
     if (net_ip_checksum(iph) != 0) {
         pkt_free(pkt);
         return;
@@ -88,15 +90,19 @@ void ip_input(struct netif *dev, struct net_pkt *pkt) {
     }
     
     uint16_t tot_len = ntohs(iph->tot_len);
-    if (tot_len > pkt->len) {
+    if (tot_len < ihl || tot_len > pkt->len) {
+        pkt_free(pkt);
+        return;
+    }
+    /* No reassembly: drop fragments (MF set or nonzero offset). DF alone
+     * is fine — it just marks an unfragmented packet. */
+    uint16_t frag = ntohs(iph->frag_off);
+    if ((frag & 0x1FFF) != 0 || (frag & 0x2000) != 0) {
         pkt_free(pkt);
         return;
     }
     pkt->len = tot_len;
-    
-    void *payload = (uint8_t *)iph + ihl;
-    uint32_t payload_len = tot_len - ihl;
-    
+
     switch (iph->protocol) {
         case IP_PROTO_ICMP:
             icmp_input(dev, pkt);
