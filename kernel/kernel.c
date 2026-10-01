@@ -40,6 +40,7 @@
 #include <dos/dos.h>
 #include <acpi.h>
 #include <iommu.h>
+#include <bcache.h>
 extern uint32_t multiboot_magic;
 extern uint64_t multiboot_info;
 
@@ -256,6 +257,9 @@ void kernel_main(void) {
     /* Pipe chunked-write selftest (precisa do timer rodando: reader/writer
      * bloqueiam em waitqueues com timeout). */
     pipe_test();
+
+    /* Bcache sob preempção: readers concorrentes com I/O fora do lock. */
+    bcache_stress_test();
 
     /* Primeira task Ring 3 da história do kernel (timer + assigns prontos). */
     ring3_selftest();
