@@ -35,6 +35,12 @@ typedef struct msg_port {
     wait_queue_head_t wait;
     spinlock_t lock;
     uint64_t owner;   /* pid of creating task (0 = kernel/no-task) */
+    /* Lifetime: +1 for list membership, +1 per pinned user (a waiter
+     * across schedule()). Delete unlinks, marks dead, wakes waiters and
+     * drops the list ref; the object is freed when the last pin drops,
+     * so no waiter ever resumes on freed memory. All under registry_lock. */
+    int refcount;
+    int dead;
 } msg_port_t;
 
 typedef struct kreply {
@@ -60,6 +66,28 @@ static msg_port_t *find_port_locked(int32_t id)
         if (p->id == id)
             return p;
     return NULL;
+}
+
+/* registry_lock must be held. Finds a listed (non-deleted) port and pins
+ * it. The caller must drop the pin with port_release_locked() — which
+ * may free. */
+static msg_port_t *port_hold_locked(int32_t id)
+{
+    msg_port_t *p = find_port_locked(id);
+    if (p)
+        p->refcount++;
+    return p;
+}
+
+/* registry_lock must be held. Frees the port (queue already purged by the
+ * deleter) once list membership and all pins are gone. */
+static void port_release_locked(msg_port_t *port)
+{
+    if (!port)
+        return;
+    port->refcount--;
+    if (port->refcount == 0)
+        kfree(port);
 }
 
 static uint64_t caller_pid(void) {
@@ -109,6 +137,8 @@ int64_t msgport_create(const char *name)
     init_waitqueue_head(&port->wait);
     spinlock_init(&port->lock);
     port->owner = current ? current->pid : 0;
+    port->refcount = 1;   /* list membership */
+    port->dead = 0;
 
     if (name) {
         int i = 0;
@@ -166,6 +196,8 @@ int64_t msgport_delete(int32_t id)
     *pp = port->next;
 
     kmsg_t *km = port->head;
+    port->head = NULL;
+    port->tail = NULL;
     while (km) {
         kmsg_t *next = km->next;
         kfree(km);
@@ -185,16 +217,20 @@ int64_t msgport_delete(int32_t id)
         }
     }
 
+    /* Unlinked ports stay alive while pinned waiters exist: mark dead so
+     * woken waiters re-lookup by id, fail, and return -1 instead of
+     * touching a stale queue. */
+    port->dead = 1;
     wake_up(&port->wait);
+    port_release_locked(port);
     spin_unlock_irqrestore(&registry_lock, flags);
-    kfree(port);
     return 0;
 }
 
 /* Delete every port owned by @t. Called once from task_exit().
- * Loops one port at a time (find under lock, delete without holding it)
- * so we never hold registry_lock across wake_up/kfree. Pending replies
- * targeting a deleted port are purged by msgport_delete(). */
+ * Runs as the exiting task, so msgport_delete's owner check passes for
+ * its own ports. Delete unlinks + purges + wakes (freed only when the
+ * last waiter pin drops), hence the one-at-a-time loop. */
 void msgport_task_cleanup(struct task_struct *t)
 {
     if (!t)
@@ -213,42 +249,7 @@ void msgport_task_cleanup(struct task_struct *t)
         spin_unlock_irqrestore(&registry_lock, flags);
         if (!victim)
             break;
-        /* Bypass owner check: the owner is dead, cleanup is authoritative. */
-        msg_port_t *dead = NULL;
-        spin_lock_irqsave(&registry_lock, &flags);
-        msg_port_t **pp = &port_list;
-        while (*pp && (*pp)->id != victim)
-            pp = &(*pp)->next;
-        dead = *pp;
-        if (dead)
-            *pp = dead->next;
-        /* Purge replies targeting the dead port while holding the lock. */
-        kreply_t **rp = &reply_list;
-        while (*rp) {
-            kreply_t *kr = *rp;
-            if (kr->reply_port == victim || kr->owner == pid) {
-                *rp = kr->next;
-                kfree(kr->msg);
-                kfree(kr);
-            } else {
-                rp = &kr->next;
-            }
-        }
-        /* Purge remaining tokens owned by the dead task (got but never
-         * replied): without this they leak one kmsg each forever. */
-        if (!dead) {
-            spin_unlock_irqrestore(&registry_lock, flags);
-            continue;
-        }
-        kmsg_t *km = dead->head;
-        spin_unlock_irqrestore(&registry_lock, flags);
-        while (km) {
-            kmsg_t *next = km->next;
-            kfree(km);
-            km = next;
-        }
-        wake_up(&dead->wait);
-        kfree(dead);
+        msgport_delete(victim);
     }
     /* Final sweep: tokens owned by pid whose port outlived them
      * (e.g. reply_port belongs to another task that is still alive). */
@@ -390,41 +391,73 @@ int64_t msgport_get(int32_t id, msg_t *msg, int64_t *token)
 
 int64_t msgport_wait(int32_t id, int64_t timeout_ms)
 {
-    unsigned long flags;
-    spin_lock_irqsave(&registry_lock, &flags);
-    msg_port_t *port = find_port_locked(id);
-    if (!port) {
-        spin_unlock_irqrestore(&registry_lock, flags);
-        return -1;
-    }
-    uint64_t pid = caller_pid();
-    if (pid != 0 && port->owner != 0 && port->owner != pid) {
-        spin_unlock_irqrestore(&registry_lock, flags);
-        return -1;
-    }
-    spin_unlock_irqrestore(&registry_lock, flags);
-
     uint64_t deadline = 0;
     if (timeout_ms > 0)
         deadline = timer_get_ticks() + (uint64_t)(timeout_ms / 10);
 
     DEFINE_WAIT(__w);
     for (;;) {
+        msg_port_t *port;
+        unsigned long flags;
         spin_lock_irqsave(&registry_lock, &flags);
+        port = port_hold_locked(id);
+        if (!port) {
+            /* Deleted while (or before) waiting: -1, never a stale queue. */
+            spin_unlock_irqrestore(&registry_lock, flags);
+            return -1;
+        }
+        uint64_t pid = caller_pid();
+        if (pid != 0 && port->owner != 0 && port->owner != pid) {
+            port_release_locked(port);
+            spin_unlock_irqrestore(&registry_lock, flags);
+            return -1;
+        }
         if (port->head != NULL) {
+            port_release_locked(port);
             spin_unlock_irqrestore(&registry_lock, flags);
             break;
         }
+        /* Already pinned by port_hold_locked: the pin survives the sleep,
+         * so delete can unlink + free only after our last finish_wait +
+         * port_release_locked. Re-lookup by id every lap: the pointer is
+         * never trusted across schedule(). */
         spin_unlock_irqrestore(&registry_lock, flags);
 
-        if (timeout_ms > 0 && timer_get_ticks() >= deadline)
+        if (timeout_ms > 0 && timer_get_ticks() >= deadline) {
+            spin_lock_irqsave(&registry_lock, &flags);
+            port_release_locked(port);
+            spin_unlock_irqrestore(&registry_lock, flags);
             return -1;
+        }
 
         prepare_to_wait(&port->wait, &__w, TASK_STATE_UNINTERRUPTIBLE);
+        /* Lost-wakeup window (unlock above → prepare): re-check under
+         * lock; a message or a delete in between short-circuits the
+         * sleep instead of blocking until the next event. */
+        spin_lock_irqsave(&registry_lock, &flags);
+        /* dead covers id reuse: a new port may already own this id while
+         * our pinned object is unlinked — never sleep on a dead queue. */
+        int evicted = (port->dead || find_port_locked(id) != port);
+        int arrived = (!evicted && port->head != NULL);
+        spin_unlock_irqrestore(&registry_lock, flags);
+        if (evicted || arrived) {
+            finish_wait(&port->wait, &__w);
+            spin_lock_irqsave(&registry_lock, &flags);
+            port_release_locked(port);
+            spin_unlock_irqrestore(&registry_lock, flags);
+            if (arrived)
+                break;
+            continue;   /* re-lookup reports the deletion as -1 */
+        }
         current->state = TASK_STATE_UNINTERRUPTIBLE;
         schedule();
+        /* Woken: drop the pin before re-looking up, so a concurrent
+         * delete can complete while we loop back to find_port_locked. */
+        spin_lock_irqsave(&registry_lock, &flags);
+        finish_wait(&port->wait, &__w);
+        port_release_locked(port);
+        spin_unlock_irqrestore(&registry_lock, flags);
     }
-    finish_wait(&port->wait, &__w);
     return 0;
 }
 
@@ -522,6 +555,8 @@ static void msg_check(int cond, const char *what)
         screen_log("FAIL", COLOR_LIGHT_RED, what);
     }
 }
+static void msgport_race_test(void);
+static void msgport_ordering_test(void);
 
 void msgport_test(void)
 {
@@ -579,9 +614,143 @@ void msgport_test(void)
     msg_check(msgport_put((int32_t)a, &m) != 0, "MSGPORT-TEST put apos delete");
     msg_check(msgport_delete((int32_t)b) == 0, "MSGPORT-TEST delete b");
 
+    msgport_race_test();
+    msgport_ordering_test();
+
     if (test_failures == 0)
         serial_print("[MSGPORT-TEST] PASS\n");
     screen_log(test_failures == 0 ? "OK" : "FAIL",
                test_failures == 0 ? COLOR_LIGHT_GREEN : COLOR_LIGHT_RED,
                test_failures == 0 ? "MSGPORT-TEST PASS" : "MSGPORT-TEST falhou");
+}
+
+/* Cross-task wait/wake/reply sob owner-auth: W cria P1 (dono=W), publica
+ * o id e bloqueia em wait; main (dono de P2) envia com reply_port=P2; W
+ * acorda, recebe + responde; main confere o ack em P2. Polling com
+ * schedule() e teto de iterações — sem dependência do timer. Ao sair, W
+ * morre e o cleanup apaga P1 (verificado pelo main). */
+static volatile int32_t race_p1 = 0;
+static volatile int race_done = 0;
+static volatile int64_t race_wrc = -99;
+
+static void msgport_race_waiter(void) {
+    int64_t p1 = msgport_create("tstR1");
+    if (p1 <= 0) {
+        race_done = 1;
+        return;
+    }
+    race_p1 = (int32_t)p1;
+    int64_t wrc = msgport_wait((int32_t)p1, 0);
+    race_wrc = wrc;
+    if (wrc != 0) {
+        race_done = 1;
+        return;
+    }
+    msg_t out;
+    int64_t tok = 0;
+    if (msgport_get((int32_t)p1, &out, &tok) != MSGPORT_GET_MSG) {
+        race_done = 1;
+        return;
+    }
+    msg_t ack;
+    ack.size = 2;
+    ack.code = 0x7777;
+    ack.reply_port = -1;
+    ack.payload[0] = 'o';
+    ack.payload[1] = 'k';
+    msgport_reply(tok, &ack);
+    race_done = 1;
+}
+
+static int race_poll(volatile int *flag, int want, unsigned iters) {
+    while (iters-- && *flag != want)
+        schedule();
+    return *flag == want;
+}
+
+static void msgport_race_test(void) {
+    serial_print("[MSGPORT-TEST] race: cross-task wait/wake/reply...\n");
+    race_p1 = 0;
+    race_done = 0;
+    race_wrc = -99;
+
+    int64_t p2 = msgport_create("tstR2");
+    msg_check(p2 > 0, "MSGPORT-TEST race create p2");
+    if (p2 <= 0)
+        return;
+    task_struct_t *w = task_create(msgport_race_waiter, 0);
+    msg_check(w != NULL, "MSGPORT-TEST race spawn waiter");
+    if (!w) {
+        msgport_delete((int32_t)p2);
+        return;
+    }
+
+    /* Aguarda o waiter publicar P1 (teto: sem hang no boot em falha). */
+    unsigned pub_iters = 200000;
+    while (pub_iters-- && race_p1 == 0)
+        schedule();
+    msg_check(race_p1 > 0, "MSGPORT-TEST race waiter publicou P1");
+    if (race_p1 <= 0) {
+        msgport_delete((int32_t)p2);
+        return;
+    }
+    int32_t p1 = race_p1;
+    /* Dá tempo do waiter bloquear (se a msg chegar antes, o wait retorna
+     * direto — ambos os caminhos valem). */
+    for (unsigned i = 0; i < 50000; i++)
+        schedule();
+
+    msg_t m;
+    m.size = 4;
+    m.code = 0x5555;
+    m.reply_port = (int32_t)p2;
+    m.payload[0] = 'p';
+    m.payload[1] = 'i';
+    m.payload[2] = 'n';
+    m.payload[3] = 'g';
+    msg_check(msgport_put(p1, &m) == 0, "MSGPORT-TEST race put cross-task");
+    msg_check(race_poll(&race_done, 1, 200000), "MSGPORT-TEST race waiter acordou");
+    msg_check(race_wrc == 0, "MSGPORT-TEST race wait rc 0");
+
+    msg_t out;
+    int64_t tok = 0;
+    msg_check(msgport_get((int32_t)p2, &out, &tok) == MSGPORT_GET_MSG,
+              "MSGPORT-TEST race get reply");
+    msg_check(out.code == 0x7777 && out.size == 2 &&
+              out.payload[0] == 'o' && out.payload[1] == 'k',
+              "MSGPORT-TEST race reply payload");
+
+    msg_check(msgport_delete((int32_t)p2) == 0, "MSGPORT-TEST race delete p2");
+    /* Waiter saiu → cleanup apagou P1: get devolve erro sem UAF (só
+     * chamadas sem bloqueio aqui — wait sem timeout travaria o boot). */
+    for (unsigned i = 0; i < 50000; i++)
+        schedule();
+    msg_check(msgport_get(p1, &out, &tok) != MSGPORT_GET_MSG,
+              "MSGPORT-TEST race P1 sumiu com o dono");
+}
+
+/* Ordenação sem concorrência: wait/delete em ids mortos e fila cheia. */
+static void msgport_ordering_test(void) {
+    msg_t m;
+    m.size = 1;
+    m.code = 1;
+    m.reply_port = -1;
+    m.payload[0] = 'x';
+
+    msg_check(msgport_wait(0x7FFFFFFF, 0) == -1, "MSGPORT-TEST wait id morto");
+    msg_check(msgport_delete(0x7FFFFFFF) == -1, "MSGPORT-TEST delete id morto");
+    msg_check(msgport_delete(0x7FFFFFFF) == -1, "MSGPORT-TEST delete 2x");
+
+    int64_t q = msgport_create("tstQ");
+    msg_check(q > 0, "MSGPORT-TEST queue create");
+    if (q <= 0)
+        return;
+    int i;
+    for (i = 0; i < MSGPORT_MAX_QUEUE; i++) {
+        if (msgport_put((int32_t)q, &m) != 0)
+            break;
+    }
+    msg_check(i == MSGPORT_MAX_QUEUE, "MSGPORT-TEST queue enche 32");
+    msg_check(msgport_put((int32_t)q, &m) != 0, "MSGPORT-TEST queue backpressure");
+    msg_check(msgport_delete((int32_t)q) == 0, "MSGPORT-TEST queue delete");
 }
