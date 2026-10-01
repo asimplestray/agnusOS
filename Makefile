@@ -10,7 +10,7 @@ LD = ld
 # -mno-mmx -mno-sse -mno-sse2: Disable vector units until kernel initializes them
 # -fno-stack-protector -fno-builtin: Disable host-specific runtime supports
 # -fno-pie -no-pie: Compile static, non-position-independent binary
-CFLAGS = -m64 -ffreestanding -O2 -Wall -Wextra -Ikernel/include \
+CFLAGS = -m64 -ffreestanding -O2 -Wall -Wextra -Werror -Ikernel/include \
          -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -fno-builtin -fno-pie
 

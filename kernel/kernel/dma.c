@@ -16,6 +16,9 @@ static void simple_memset(void *dst, int val, size_t n) {
 /* Default DMA operations (identity mapping - no IOMMU) */
 static void *default_alloc_coherent(void *dev, size_t size, uint64_t *dma_handle, int flags) {
     (void)dev; (void)flags;
+    /* NOTA: ignora size e devolve 1 bloco (limitação conhecida, épico DMA
+     * P2 — não mudar aqui; chamadores >4KiB têm overflow real). */
+    (void)size;
     uint64_t phys = pmm_alloc_block();
     if (!phys) return NULL;
     

@@ -312,9 +312,8 @@ int tty_read(tty_struct_t *tty, char *buf, int len) {
             }
         }
     } else {
-        /* Raw mode */
+        /* Raw mode (VTIME ainda sem timeout real: polling) */
         int min = t->c_cc[VMIN];
-        int time_val = t->c_cc[VTIME];
         
         while (read < len) {
             char c = tty_raw_get(tty);

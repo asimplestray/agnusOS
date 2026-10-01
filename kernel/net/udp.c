@@ -56,6 +56,10 @@ int udp_bind(struct udp_sock *sock, const uint8_t *addr, uint16_t port) {
 }
 
 static uint16_t udp_checksum_pseudo(const struct ip_hdr *iph, const struct udp_hdr *uh, const void *data, uint32_t len) {
+    /* data/len reservados p/ validação RX futura (ordem de rede); o TX
+     * deriva tudo de uh->len. */
+    (void)data;
+    (void)len;
     uint32_t sum = 0;
     
     sum += (iph->saddr[0] << 8) | iph->saddr[1];

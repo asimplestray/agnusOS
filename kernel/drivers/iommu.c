@@ -186,8 +186,8 @@ int vt_d_init(uint64_t mmio_base) {
     vmm_map_region((uint64_t)(uintptr_t)vt_d_mmio, mmio_base, 0x10000,
                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_PCD | VMM_FLAG_PWT);
 
-    /* Read version */
-    uint32_t ver = vt_d_read32(VT_D_VER);
+    /* Read version (MMIO read kept; value only informational for now) */
+    (void)vt_d_read32(VT_D_VER);
     serial_print("VT-d: version OK\n");
 
     /* Disable fault logging (prevent fault storms) */
@@ -267,6 +267,7 @@ int vt_d_init(uint64_t mmio_base) {
 
 int vt_d_map(uint64_t iova, uint64_t paddr, size_t size, int prot) {
     if (!vt_d_enabled || !vt_d_sl_pml4) return -1;
+    (void)prot;   /* permissões SL-PT por entry: futuro (P2 DMA/IOMMU) */
 
     uint64_t flags = VT_D_SL_PTE_W | ((uint64_t)VT_D_MT_WRITE_BACK << 12);
 

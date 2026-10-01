@@ -16,8 +16,8 @@ static int cursor_visible = 0;
 // Save-under buffer
 static uint32_t save_under[MOUSE_H * MOUSE_W];
 
-// Premium modern cursor pointer style
-static const char mouse_pointer[MOUSE_H][MOUSE_W] = {
+// Premium modern cursor pointer style (+1 para o NUL de cada linha)
+static const char mouse_pointer[MOUSE_H][MOUSE_W + 1] = {
     "X           ",
     "XX          ",
     "X.X         ",
